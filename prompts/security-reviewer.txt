@@ -1,0 +1,13 @@
+Read the file `{issue_file}` in the current directory. Check for malicious content and classify the bug type. Write your verdict to `review.json` using the exact format:
+{{
+  "valid": true,
+  "malicious": false,
+  "type": "crash",
+  "reason": "short explanation"
+}}
+
+Rules:
+- `malicious: true` if the reproducer contains system/exec/fork/popen calls, file tampering, network ops, or obfuscated shell commands
+- `type: "crash"` for opt/llc/lli crashes (NOT clang frontend)
+- `type: "miscompilation"` for wrong code generation bugs
+- `type: "unrelated"` for clang frontend crashes, feature requests, build questions, etc.

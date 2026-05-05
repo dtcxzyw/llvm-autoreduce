@@ -2,3 +2,6 @@ build
 .vscode
 .cache
 __pycache__
+work/
+dist/
+*.egg-info/
