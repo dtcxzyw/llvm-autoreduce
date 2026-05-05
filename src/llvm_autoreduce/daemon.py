@@ -184,9 +184,21 @@ def reprocess_issue(issue):
     issue_text = f"# Issue #{issue_id}: {title}\n\n{body}"
     workdir.write(wd / "issue.md", issue_text)
 
-    # Step 1: security review
+    # Step 1: extract all reproducers (code blocks, Godbolt, attachments)
+    godbolt_sources = _fetch_godbolt(body)
+    _download_attachments(body, wd)
+    sources = extract.assemble_reproducers(body, godbolt_sources, wd)
+    reproducer_texts = []
+    for name, content, _lang in sources:
+        target = wd / name
+        workdir.write(target, content)
+        reproducer_texts.append(f"### File: {name}\n```\n{content[:8192]}\n```")
+    workdir.write(wd / "reproducers.md", "\n\n".join(reproducer_texts))
+
+    # Step 2: security review (sees issue.md + all extracted reproducers)
     review_prompt = read_prompt("security-reviewer.txt").format(
         issue_file="issue.md",
+        reproducer_file="reproducers.md",
     )
     ok = opencode.run(
         agent="security-reviewer",
@@ -224,20 +236,7 @@ def reprocess_issue(issue):
         workdir.cleanup(issue_id)
         return
 
-    # Step 2: fetch external sources (Godbolt, attachments)
-    godbolt_sources = _fetch_godbolt(body)
-    _download_attachments(body, wd)
-    sources = extract.assemble_reproducers(body, godbolt_sources, wd)
-    if not sources:
-        log.info("issue=%d no reproducer found", issue_id)
-        mark_processed(issue_id)
-        workdir.cleanup(issue_id)
-        return
-
-    for name, content, _lang in sources:
-        target = wd / name
-        workdir.write(target, content)
-
+    # Step 3: reduction
     reduce_prompt = read_prompt("reducer.txt").format(
         issue_file="issue.md",
         verdict_type=verdict["type"],

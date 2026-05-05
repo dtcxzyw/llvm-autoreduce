@@ -1,4 +1,11 @@
-Read the file `{issue_file}` in the current directory. Check for malicious content and classify the bug type. Write your verdict to `review.json` using the exact format:
+Read `{issue_file}` for the bug report, and `{reproducer_file}` for all extracted reproducer files. Check for malicious content and classify the bug type.
+
+Scan ALL reproducer files (inline code blocks, Godbolt sources, attachments) for:
+- `system()`, `execve()`, `execvp()`, `fork()`, `popen()` calls
+- File system tampering, network operations, obfuscated shell commands
+- Suspicious includes/imports of attack libraries
+
+Write your verdict to `review.json` using the exact format:
 {{
   "valid": true,
   "malicious": false,
@@ -7,7 +14,8 @@ Read the file `{issue_file}` in the current directory. Check for malicious conte
 }}
 
 Rules:
-- `malicious: true` if the reproducer contains system/exec/fork/popen calls, file tampering, network ops, or obfuscated shell commands
+- `malicious: true` if ANY reproducer contains the above patterns
 - `type: "crash"` for opt/llc/lli crashes (NOT clang frontend)
 - `type: "miscompilation"` for wrong code generation bugs
 - `type: "unrelated"` for clang frontend crashes, feature requests, build questions, etc.
+- `valid: true` only if there's a runnable reproducer AND it's crash/miscompilation
