@@ -195,7 +195,7 @@ def reprocess_issue(issue):
         reproducer_texts.append(f"### File: {name}\n```\n{content[:8192]}\n```")
     workdir.write(wd / "reproducers.md", "\n\n".join(reproducer_texts))
 
-    # Step 2: security review (sees issue.md + all extracted reproducers)
+    # Step 2: security review (bash denied) — audit + classify
     review_prompt = read_prompt("security-reviewer.txt").format(
         issue_file="issue.md",
         reproducer_file="reproducers.md",
@@ -236,13 +236,37 @@ def reprocess_issue(issue):
         workdir.cleanup(issue_id)
         return
 
-    # Step 3: reduction
+    # Step 3: extract reproducer metadata (bash allowed)
+    extract_prompt = read_prompt("extractor.txt")
+    ok = opencode.run(
+        agent="extractor",
+        workdir=wd,
+        prompt=extract_prompt,
+        timeout=config.REVIEW_TIMEOUT,
+    )
+    if not ok:
+        log.warning("issue=%d extractor agent failed", issue_id)
+        mark_processed(issue_id)
+        workdir.cleanup(issue_id)
+        return
+
+    extract_path = wd / "extract.json"
+    if extract_path.exists():
+        try:
+            meta = workdir.read_json(extract_path)
+        except json.JSONDecodeError:
+            meta = {}
+    else:
+        meta = {}
+    log.info("issue=%d extract=%s", issue_id, json.dumps(meta))
+
+    # Step 4: reduction
     reduce_prompt = read_prompt("reducer.txt").format(
         issue_file="issue.md",
         verdict_type=verdict["type"],
-        reproducer_file=verdict.get("reproducer_file", "repro.ll"),
-        crash_pattern=verdict.get("crash_pattern", ""),
-        pipeline=verdict.get("pipeline", "-passes='default<O2>'"),
+        reproducer_file=meta.get("reproducer_file", "repro.ll"),
+        crash_pattern=meta.get("crash_pattern", ""),
+        pipeline=meta.get("pipeline", "-passes='default<O2>'"),
     )
     ok = opencode.run(
         agent="reducer",

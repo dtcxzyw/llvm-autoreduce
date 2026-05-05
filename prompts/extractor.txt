@@ -1,0 +1,12 @@
+Read `reproducers.md` for all reproducer files and `issue.md` for the bug report. Use bash to inspect files.
+
+1. Identify the primary reproducer file name
+2. Extract a crash pattern regex from the crash output (empty string for miscompilation)
+3. Determine the opt pipeline from the issue
+
+Write your findings to `extract.json` in this exact format:
+{{
+  "reproducer_file": "filename.ll",
+  "crash_pattern": "regex or empty string",
+  "pipeline": "-passes='...'"
+}}
