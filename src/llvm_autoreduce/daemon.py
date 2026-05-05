@@ -240,6 +240,9 @@ def reprocess_issue(issue):
     reduce_prompt = read_prompt("reducer.txt").format(
         issue_file="issue.md",
         verdict_type=verdict["type"],
+        reproducer_file=verdict.get("reproducer_file", "repro.ll"),
+        crash_pattern=verdict.get("crash_pattern", ""),
+        pipeline=verdict.get("pipeline", "-passes='default<O2>'"),
     )
     ok = opencode.run(
         agent="reducer",

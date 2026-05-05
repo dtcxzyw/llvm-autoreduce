@@ -26,10 +26,16 @@ Write your verdict to `review.json` with this format:
   "valid": true,
   "malicious": false,
   "type": "crash",
+  "reproducer_file": "repro.ll",
+  "crash_pattern": "Assertion.*failed at LICM.cpp",
+  "pipeline": "-passes='default<O2>'",
   "reason": "opt crashes in LICM pass with assertion failure"
 }
 
 - `valid`: true if there's at least one runnable reproducer and the bug is a crash or miscompilation
 - `malicious`: true if ANY reproducer contains malicious code
 - `type`: "crash", "miscompilation", or "unrelated"
+- `reproducer_file`: the filename of the primary reproducer (required for crash/miscompilation)
+- `crash_pattern`: a regex pattern that matches the crash output (required for crash, empty for miscompilation)
+- `pipeline`: the opt pass pipeline suggested by the issue (e.g. "-passes='default<O2>'", "-passes='licm'")
 - `reason`: short explanation of your decision
