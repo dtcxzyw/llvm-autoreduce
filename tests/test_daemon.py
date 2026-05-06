@@ -2,7 +2,7 @@
 
 import pytest
 
-from llvm_autoreduce.daemon import _validate_meta, _validate_verdict
+from llvm_autoreduce.daemon import _validate_meta, _validate_result, _validate_verdict
 
 
 class TestValidateVerdict:
@@ -37,39 +37,55 @@ class TestValidateMeta:
             "pipeline": "-passes='default<O2>'",
         })
 
-    def test_empty_meta_ok(self):
-        _validate_meta({})
+    def test_empty_meta_raises(self):
+        with pytest.raises(ValueError, match="bug_type"):
+            _validate_meta({})
 
     def test_path_traversal_in_reproducer(self):
         with pytest.raises(ValueError, match="path separators"):
-            _validate_meta({"reproducer_file": "../../etc/passwd"})
+            _validate_meta({"bug_type": "crash", "reproducer_file": "../../etc/passwd"})
 
     def test_backslash_in_reproducer(self):
         with pytest.raises(ValueError, match="path separators"):
-            _validate_meta({"reproducer_file": "evil\\windows.cmd"})
+            _validate_meta({"bug_type": "crash", "reproducer_file": "evil\\windows.cmd"})
 
     def test_shell_metachar_in_pipeline(self):
         with pytest.raises(ValueError, match="shell metacharacters"):
-            _validate_meta({"pipeline": "-passes='foo' ; rm -rf /"})
+            _validate_meta({"bug_type": "crash", "pipeline": "-passes='foo' ; rm -rf /"})
 
     def test_backtick_in_pipeline(self):
         with pytest.raises(ValueError, match="shell metacharacters"):
-            _validate_meta({"pipeline": "`id`"})
+            _validate_meta({"bug_type": "crash", "pipeline": "`id`"})
 
     def test_crash_pattern_too_long(self):
         with pytest.raises(ValueError, match="crash_pattern too long"):
-            _validate_meta({"crash_pattern": "A" * 2001})
+            _validate_meta({"bug_type": "crash", "crash_pattern": "A" * 2001})
 
     def test_crash_pattern_boundary_ok(self):
-        _validate_meta({"crash_pattern": "A" * 2000})
+        _validate_meta({"bug_type": "crash", "crash_pattern": "A" * 2000})
 
     def test_invalid_bug_type(self):
         with pytest.raises(ValueError, match="bug_type"):
             _validate_meta({"bug_type": "exploit"})
 
     def test_default_o2_pipeline_ok(self):
-        _validate_meta({"pipeline": "-passes='default<O2>'"})
+        _validate_meta({"bug_type": "crash", "pipeline": "-passes='default<O2>'"})
 
     def test_pipeline_with_dollar(self):
         with pytest.raises(ValueError, match="shell metacharacters"):
-            _validate_meta({"pipeline": "$(whoami)"})
+            _validate_meta({"bug_type": "crash", "pipeline": "$(whoami)"})
+
+
+class TestValidateResult:
+    def test_crash_ok(self):
+        _validate_result({"ir_file": "repro.ll", "type": "crash", "crash_pattern": "segfault"})
+
+    def test_llubi_ok(self):
+        _validate_result({"ir_file": "repro.ll", "oracle": "llubi"})
+
+    def test_alive2_ok(self):
+        _validate_result({"ir_file": "repro.ll", "oracle": "alive2"})
+
+    def test_missing_ir_file_raises(self):
+        with pytest.raises(ValueError, match="ir_file"):
+            _validate_result({"type": "crash"})

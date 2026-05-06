@@ -94,7 +94,7 @@ def _validate_verdict(verdict):
 def _validate_meta(meta):
     """Reject extract.json with unexpected values."""
     bug_type = meta.get("bug_type", "")
-    if bug_type and bug_type not in VALID_BUG_TYPES:
+    if bug_type not in VALID_BUG_TYPES:
         raise ValueError(f"extract.json bug_type not in {VALID_BUG_TYPES}: {bug_type!r}")
     reproducer = meta.get("reproducer_file", "")
     if reproducer and ("/" in reproducer or "\\" in reproducer or "\0" in reproducer):
@@ -127,16 +127,21 @@ def _safe_relative(workdir_path, filename):
     return str(resolved)
 
 
+def _validate_result(result):
+    """Reject result.json with missing required fields."""
+    if "ir_file" not in result:
+        raise ValueError("result.json missing required field: ir_file")
+
+
 def verify_crash(result, workdir_path):
     tool = result.get("tool", "opt")
-    ir_file = result["ir_file"]
-    _safe_relative(workdir_path, ir_file)
-    # ACCEPTED RISK (R5): result.json cmd_args comes from the reducer agent
+    safe_ir = _safe_relative(workdir_path, result["ir_file"])
+    # ACCEPTED RISK (R5): result.json args comes from the reducer agent
     # (which has bash access). List-based subprocess.run prevents shell
     # injection but does not prevent argument injection into LLVM tools
     # (e.g. -o /dev/null). This is acceptable because the reducer agent
     # already has unrestricted bash access within the workdir.
-    cmd = [tool] + shlex.split(result.get("cmd_args", "")) + [ir_file]
+    cmd = [tool] + shlex.split(result.get("args", "")) + [safe_ir]
     try:
         p = subprocess.run(
             cmd, capture_output=True, text=True,
@@ -152,14 +157,19 @@ def verify_crash(result, workdir_path):
     return needle in (p.stderr + p.stdout)
 
 
+# ACCEPTED RISK (R6): verify_llubi compares exact stdout strings
+# to detect miscompilation. Non-deterministic output (timestamps,
+# metadata, randomization) may cause false positives.
 def verify_llubi(result, workdir_path):
-    ir_file = result["ir_file"]
-    pass_name = result["pass_name"]
+    safe_ir = _safe_relative(workdir_path, result["ir_file"])
+    args = result.get("args", "")
+    # ACCEPTED RISK (R7): llubi_args from result.json may inject arguments
+    # into llubi_legacy. The reducer agent already has unrestricted bash
+    # access within the workdir.
     llubi_args = result.get("llubi_args", "--max-steps 1000000")
-    _safe_relative(workdir_path, ir_file)
     try:
         ref = subprocess.run(
-            [str(config.LLUBI_BIN)] + shlex.split(llubi_args) + [ir_file],
+            [str(config.LLUBI_BIN)] + shlex.split(llubi_args) + [safe_ir],
             capture_output=True, text=True,
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
         )
@@ -168,7 +178,7 @@ def verify_llubi(result, workdir_path):
             return False
 
         opt_out = subprocess.run(
-            ["opt", f"-passes={pass_name}", ir_file, "-S"],
+            ["opt"] + shlex.split(args) + [safe_ir, "-S"],
             capture_output=True, text=True,
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
         )
@@ -190,13 +200,15 @@ def verify_llubi(result, workdir_path):
 
 
 def verify_alive2(result, workdir_path):
-    ir_file = result["ir_file"]
-    pass_name = result["pass_name"]
+    safe_ir = _safe_relative(workdir_path, result["ir_file"])
+    args = result.get("args", "")
+    # ACCEPTED RISK (R7): alive2_args from result.json may inject arguments
+    # into alive-tv. The reducer agent already has unrestricted bash
+    # access within the workdir.
     alive2_args = result.get("alive2_args", "--smt-to=10000")
-    _safe_relative(workdir_path, ir_file)
     try:
         opt_out = subprocess.run(
-            ["opt", f"-passes={pass_name}", ir_file, "-S"],
+            ["opt"] + shlex.split(args) + [safe_ir, "-S"],
             capture_output=True, text=True,
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
         )
@@ -205,7 +217,7 @@ def verify_alive2(result, workdir_path):
 
         p = subprocess.run(
             [str(config.ALIVE2_BIN), "--disable-undef-input"]
-            + shlex.split(alive2_args) + [ir_file, "__transformed.ll"],
+            + shlex.split(alive2_args) + [safe_ir, "__transformed.ll"],
             capture_output=True, text=True,
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
         )
@@ -247,8 +259,7 @@ def verify_extract_consistency(meta, result):
         log.warning("extract bug_type=crash but crash_pattern is empty")
         return False
     if bug_type == "miscompilation" and crash_pattern:
-        log.warning("extract bug_type=miscompilation but crash_pattern is non-empty")
-        return False
+        log.warning("extract bug_type=miscompilation but crash_pattern is non-empty, ignoring crash_pattern")
 
     if result_type == "crash":
         result_pattern = result.get("crash_pattern", "")
@@ -467,6 +478,14 @@ def reprocess_issue(issue):
         result = workdir.read_json(result_path)
     except json.JSONDecodeError:
         log.warning("issue=%d result.json invalid", issue_id)
+        mark_processed(issue_id)
+        workdir.cleanup(issue_id)
+        return
+
+    try:
+        _validate_result(result)
+    except ValueError:
+        log.warning("issue=%d result.json validation failed", issue_id)
         mark_processed(issue_id)
         workdir.cleanup(issue_id)
         return

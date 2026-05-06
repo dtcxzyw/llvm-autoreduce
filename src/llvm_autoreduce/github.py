@@ -57,10 +57,13 @@ def get_issue_title(issue_number):
     return resp.json()["title"]
 
 
-def download_attachment(url, dest_path):
+def download_attachment(url, dest_path, max_size=10240):
     resp = _request("GET", url, headers={"Authorization": f"Bearer {AUTOREDUCE_TOKEN}", "Accept": "application/octet-stream"})
+    content = resp.content
+    if len(content) > max_size:
+        raise requests.HTTPError(f"Attachment too large: {len(content)} bytes (max {max_size})")
     with open(dest_path, "wb") as f:
-        f.write(resp.content)
+        f.write(content)
 
 
 def create_issue(title, body):

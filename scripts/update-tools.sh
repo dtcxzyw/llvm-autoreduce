@@ -55,21 +55,42 @@ checkout_and_build_llubi() {
     cmake --build "$WORK_DIR/llubi-trunk/build" --target llubi_legacy
 }
 
-ROLLBACK_RAN=false
+# ---- per-component rollback helpers ----
 
-rollback_known_good() {
-    echo "ROLLBACK: restoring known-good versions"
-    ROLLBACK_RAN=true
-    if [ ! -f "$KNOWN_GOOD_FILE" ]; then
-        echo "FATAL: no .known-good file to roll back to"
-        exit 1
-    fi
-    llvm_hash=$(python3 -c "import json; print(json.load(open('$KNOWN_GOOD_FILE'))['llvm'])")
-    alive2_hash=$(python3 -c "import json; print(json.load(open('$KNOWN_GOOD_FILE'))['alive2'])")
-    llubi_hash=$(python3 -c "import json; print(json.load(open('$KNOWN_GOOD_FILE'))['llubi'])")
-    checkout_and_build_llvm "$llvm_hash" || { echo "FATAL: llvm rollback build failed"; exit 1; }
-    checkout_and_build_alive2 "$alive2_hash" || { echo "WARN: alive2 rollback build failed"; }
-    checkout_and_build_llubi "$llubi_hash" || { echo "WARN: llubi rollback build failed"; }
+rollback_llvm() {
+    echo "ROLLBACK: restoring known-good LLVM"
+    local hash
+    hash=$(python3 -c "import json; print(json.load(open('$KNOWN_GOOD_FILE'))['llvm'])")
+    checkout_and_build_llvm "$hash" || { echo "FATAL: llvm rollback build failed"; exit 1; }
+}
+
+rollback_alive2() {
+    echo "ROLLBACK: restoring known-good alive2"
+    local hash
+    hash=$(python3 -c "import json; print(json.load(open('$KNOWN_GOOD_FILE'))['alive2'])")
+    checkout_and_build_alive2 "$hash" || echo "WARN: alive2 rollback build failed"
+}
+
+rollback_llubi() {
+    echo "ROLLBACK: restoring known-good llubi"
+    local hash
+    hash=$(python3 -c "import json; print(json.load(open('$KNOWN_GOOD_FILE'))['llubi'])")
+    checkout_and_build_llubi "$hash" || echo "WARN: llubi rollback build failed"
+}
+
+update_known_hash() {
+    local component="$1" hash="$2"
+    python3 -c "
+import json, os
+path = '${KNOWN_GOOD_FILE}'
+data = {}
+if os.path.exists(path):
+    with open(path) as f:
+        data = json.load(f)
+data['${component}'] = '${hash}'
+with open(path, 'w') as f:
+    json.dump(data, f, indent=2)
+"
 }
 
 build_all() {
@@ -84,16 +105,6 @@ record_known_good() {
   "llvm": "$LLVM_LATEST",
   "alive2": "$ALIVE2_LATEST",
   "llubi": "$LLUBI_LATEST"
-}
-JSONEOF
-}
-
-record_known_good_partial() {
-    cat > "$KNOWN_GOOD_FILE" <<JSONEOF
-{
-  "llvm": "$LLVM_CURRENT",
-  "alive2": "$ALIVE2_CURRENT",
-  "llubi": "$LLUBI_CURRENT"
 }
 JSONEOF
 }
@@ -155,28 +166,49 @@ if [ "$LLVM_CURRENT" = "$LLVM_LATEST" ] && [ "$ALIVE2_CURRENT" = "$ALIVE2_LATEST
     exit 0
 fi
 
-# ---- attempt full update ----
+# ---- attempt incremental update (per-component rollback) ----
 
-echo "BUILD: LLVM $LLVM_CURRENT → $LLVM_LATEST"
-checkout_and_build_llvm "$LLVM_LATEST" || {
-    echo "FAIL: LLVM build, rolling back"
-    rollback_known_good
-    exit 2
-}
+if [ "$LLVM_CURRENT" != "$LLVM_LATEST" ]; then
+    echo "BUILD: LLVM $LLVM_CURRENT → $LLVM_LATEST"
+    if checkout_and_build_llvm "$LLVM_LATEST"; then
+        update_known_hash llvm "$LLVM_LATEST"
+        LLVM_CURRENT=$LLVM_LATEST
+    else
+        echo "FAIL: LLVM build, rolling back"
+        rollback_llvm
+        exit 2
+    fi
+else
+    echo "UP-TO-DATE: LLVM"
+fi
 
-echo "BUILD: alive2 $ALIVE2_CURRENT → $ALIVE2_LATEST"
-checkout_and_build_alive2 "$ALIVE2_LATEST" || {
-    echo "FAIL: alive2 build, rolling back"
-    rollback_known_good
-    exit 2
-}
+if [ "$ALIVE2_CURRENT" != "$ALIVE2_LATEST" ]; then
+    echo "BUILD: alive2 $ALIVE2_CURRENT → $ALIVE2_LATEST"
+    if checkout_and_build_alive2 "$ALIVE2_LATEST"; then
+        update_known_hash alive2 "$ALIVE2_LATEST"
+        ALIVE2_CURRENT=$ALIVE2_LATEST
+    else
+        echo "FAIL: alive2 build, rolling back"
+        rollback_alive2
+        exit 2
+    fi
+else
+    echo "UP-TO-DATE: alive2"
+fi
 
-echo "BUILD: llubi $LLUBI_CURRENT → $LLUBI_LATEST"
-checkout_and_build_llubi "$LLUBI_LATEST" || {
-    echo "FAIL: llubi build, rolling back"
-    rollback_known_good
-    exit 2
-}
+if [ "$LLUBI_CURRENT" != "$LLUBI_LATEST" ]; then
+    echo "BUILD: llubi $LLUBI_CURRENT → $LLUBI_LATEST"
+    if checkout_and_build_llubi "$LLUBI_LATEST"; then
+        update_known_hash llubi "$LLUBI_LATEST"
+        LLUBI_CURRENT=$LLUBI_LATEST
+    else
+        echo "FAIL: llubi build, rolling back"
+        rollback_llubi
+        exit 2
+    fi
+else
+    echo "UP-TO-DATE: llubi"
+fi
 
 record_known_good
 echo "OK: all tools updated"
