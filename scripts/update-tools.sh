@@ -55,8 +55,11 @@ checkout_and_build_llubi() {
     cmake --build "$WORK_DIR/llubi-trunk/build" --target llubi_legacy
 }
 
+ROLLBACK_RAN=false
+
 rollback_known_good() {
     echo "ROLLBACK: restoring known-good versions"
+    ROLLBACK_RAN=true
     if [ ! -f "$KNOWN_GOOD_FILE" ]; then
         echo "FATAL: no .known-good file to roll back to"
         exit 1
@@ -158,21 +161,21 @@ echo "BUILD: LLVM $LLVM_CURRENT → $LLVM_LATEST"
 checkout_and_build_llvm "$LLVM_LATEST" || {
     echo "FAIL: LLVM build, rolling back"
     rollback_known_good
-    exit 0
+    exit 2
 }
 
 echo "BUILD: alive2 $ALIVE2_CURRENT → $ALIVE2_LATEST"
 checkout_and_build_alive2 "$ALIVE2_LATEST" || {
     echo "FAIL: alive2 build, rolling back"
     rollback_known_good
-    exit 0
+    exit 2
 }
 
 echo "BUILD: llubi $LLUBI_CURRENT → $LLUBI_LATEST"
 checkout_and_build_llubi "$LLUBI_LATEST" || {
     echo "FAIL: llubi build, rolling back"
     rollback_known_good
-    exit 0
+    exit 2
 }
 
 record_known_good

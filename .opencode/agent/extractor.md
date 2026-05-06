@@ -13,7 +13,7 @@ Read `reproducers.md` for all extracted reproducer files, and `issue.md` for the
 Your job:
 1. Identify the **bug type** — classify as `crash` (opt/llc/lli crash with stack trace or assertion), `miscompilation` (wrong code generation), or `unrelated`
 2. Identify which file is the **primary reproducer** — the first .ll file or the most complete one
-3. Extract a **crash pattern** — a regex that uniquely matches the crash output (e.g. "Assertion.*failed at LICM.cpp:1234"). For miscompilation bugs, leave empty.
+3. Extract a **crash pattern** — a literal substring from the crash output that uniquely identifies this crash (e.g. "Assertion `X && Y` failed"). Do NOT use regex — produce a plain text fragment. For miscompilation bugs, leave empty.
 4. Determine the **opt pipeline** — the pass or pipeline from the issue (e.g. "-passes='default<O2>'", "-passes='licm'"). Default: "-passes='default<O2>'"
 
 Write your findings to `extract.json`:

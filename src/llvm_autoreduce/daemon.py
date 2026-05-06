@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Main daemon loop for llvm-autoreduce."""
 
+import atexit
 import json
 import logging
+import os
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -26,6 +29,27 @@ def setup_logging():
     root.handlers.clear()
     root.addHandler(handler)
     root.addHandler(logging.StreamHandler(sys.stderr))
+
+
+_shutdown_requested = False
+
+
+def _handle_shutdown(signum, _frame):
+    global _shutdown_requested
+    sig_name = signal.Signals(signum).name
+    log.info("received %s, shutting down after current round", sig_name)
+    _shutdown_requested = True
+
+
+def _write_pidfile():
+    pidfile = config.WORK_ROOT / "daemon.pid"
+    pidfile.write_text(str(os.getpid()))
+
+
+def _remove_pidfile():
+    pidfile = config.WORK_ROOT / "daemon.pid"
+    if pidfile.exists():
+        pidfile.unlink()
 
 
 def mark_processed(issue_id):
@@ -379,9 +403,15 @@ def reprocess_issue(issue):
         try:
             meta = workdir.read_json(extract_path)
         except json.JSONDecodeError:
-            meta = {}
+            log.warning("issue=%d extract.json invalid, skip", issue_id)
+            mark_processed(issue_id)
+            workdir.cleanup(issue_id)
+            return
     else:
-        meta = {}
+        log.warning("issue=%d extract.json missing, skip", issue_id)
+        mark_processed(issue_id)
+        workdir.cleanup(issue_id)
+        return
     log.info("issue=%d extract=%s", issue_id, json.dumps(meta))
 
     try:
@@ -491,9 +521,14 @@ def main():
         log.critical("required binaries not found on PATH: %s", ", ".join(missing))
         sys.exit(1)
 
+    _write_pidfile()
+    atexit.register(_remove_pidfile)
+    signal.signal(signal.SIGTERM, _handle_shutdown)
+    signal.signal(signal.SIGINT, _handle_shutdown)
+
     log.info("llvm-autoreduce daemon starting")
 
-    while True:
+    while not _shutdown_requested:
         try:
             log.info("round start")
             tools.update_all()
@@ -507,7 +542,11 @@ def main():
             log.info("round done")
         except Exception:
             log.exception("round failed")
+        if _shutdown_requested:
+            break
         time.sleep(config.DAEMON_INTERVAL)
+
+    log.info("daemon shutting down")
 
 
 if __name__ == "__main__":
