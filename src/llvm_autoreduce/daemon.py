@@ -4,6 +4,7 @@
 import json
 import logging
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -32,7 +33,9 @@ def mark_processed(issue_id):
     if config.PROCESSED.exists():
         processed = set(json.loads(config.PROCESSED.read_text()))
     processed.add(str(issue_id))
-    config.PROCESSED.write_text(json.dumps(sorted(processed)))
+    tmp = config.PROCESSED.with_suffix(".tmp")
+    tmp.write_text(json.dumps(sorted(processed)))
+    tmp.replace(config.PROCESSED)
 
 
 def is_processed(issue_id):
@@ -46,14 +49,62 @@ def read_prompt(name):
     return path.read_text()
 
 
+VALID_BUG_TYPES = frozenset({"crash", "miscompilation"})
+
+
+EXPECTED_VERDICT_TYPES = frozenset({"crash", "miscompilation", "unrelated"})
+
+
+def _validate_verdict(verdict):
+    """Reject review.json with unexpected values to prevent prompt injection."""
+    valid = verdict.get("valid")
+    if valid is not True:
+        raise ValueError(f"review.json valid is not True: {valid!r}")
+    bug_type = verdict.get("type", "")
+    if bug_type not in EXPECTED_VERDICT_TYPES:
+        raise ValueError(f"review.json type not in {EXPECTED_VERDICT_TYPES}: {bug_type!r}")
+
+
+def _validate_meta(meta):
+    """Reject extract.json with unexpected values."""
+    bug_type = meta.get("bug_type", "")
+    if bug_type and bug_type not in VALID_BUG_TYPES:
+        raise ValueError(f"extract.json bug_type not in {VALID_BUG_TYPES}: {bug_type!r}")
+    reproducer = meta.get("reproducer_file", "")
+    if reproducer and ("/" in reproducer or "\\" in reproducer or "\0" in reproducer):
+        raise ValueError(f"extract.json reproducer_file contains path separators: {reproducer!r}")
+    pipeline = meta.get("pipeline", "")
+    if pipeline:
+        # Shell metacharacters that could cause command injection. Note:
+        # < > are intentionally excluded — they are part of LLVM pass syntax
+        # (e.g. -passes='default<O2>') and are safe with list-based subprocess.
+        dangerous = {"$", "`", ";", "|", "&", "(", ")", "{", "}"}
+        if any(c in pipeline for c in dangerous):
+            raise ValueError(f"extract.json pipeline contains shell metacharacters: {pipeline!r}")
+    crash_pattern = meta.get("crash_pattern", "")
+    if crash_pattern and len(crash_pattern) > 2000:
+        raise ValueError(f"extract.json crash_pattern too long: {len(crash_pattern)} chars")
+
+
+def _safe_relative(workdir_path, filename):
+    """Resolve filename against workdir and reject path traversal."""
+    resolved = (workdir_path / filename).resolve()
+    if not str(resolved).startswith(str(workdir_path.resolve())):
+        raise ValueError(f"Path traversal rejected: {filename!r}")
+    return str(resolved)
+
+
 def verify_crash(result, workdir_path):
-    cmd = f"opt -passes='{result['pass_name']}'"
+    tool = result.get("tool", "opt")
+    ir_file = result["ir_file"]
+    _safe_relative(workdir_path, ir_file)
+    cmd = [tool, f"-passes={result['pass_name']}"]
     if result.get("opt_args"):
-        cmd += f" {result['opt_args']}"
-    cmd += f" {result['ir_file']}"
+        cmd.extend(shlex.split(result["opt_args"]))
+    cmd.append(ir_file)
     try:
         p = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True,
+            cmd, capture_output=True, text=True,
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
         )
     except subprocess.TimeoutExpired:
@@ -67,10 +118,11 @@ def verify_llubi(result, workdir_path):
     ir_file = result["ir_file"]
     pass_name = result["pass_name"]
     llubi_args = result.get("llubi_args", "--max-steps 1000000")
+    _safe_relative(workdir_path, ir_file)
     try:
         ref = subprocess.run(
-            f"{config.LLUBI_BIN} {llubi_args} {ir_file}",
-            shell=True, capture_output=True, text=True,
+            [str(config.LLUBI_BIN)] + shlex.split(llubi_args) + [ir_file],
+            capture_output=True, text=True,
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
         )
         if ref.returncode != 0:
@@ -78,16 +130,16 @@ def verify_llubi(result, workdir_path):
             return False
 
         opt_out = subprocess.run(
-            f"opt -passes='{pass_name}' {ir_file} -S",
-            shell=True, capture_output=True, text=True,
+            ["opt", f"-passes={pass_name}", ir_file, "-S"],
+            capture_output=True, text=True,
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
         )
         transformed = workdir_path / "__transformed.ll"
         transformed.write_text(opt_out.stdout)
 
         test = subprocess.run(
-            f"{config.LLUBI_BIN} {llubi_args} __transformed.ll",
-            shell=True, capture_output=True, text=True,
+            [str(config.LLUBI_BIN)] + shlex.split(llubi_args) + ["__transformed.ll"],
+            capture_output=True, text=True,
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
         )
         return ref.stdout != test.stdout
@@ -100,18 +152,20 @@ def verify_alive2(result, workdir_path):
     ir_file = result["ir_file"]
     pass_name = result["pass_name"]
     alive2_args = result.get("alive2_args", "--smt-to=10000")
+    _safe_relative(workdir_path, ir_file)
     try:
         opt_out = subprocess.run(
-            f"opt -passes='{pass_name}' {ir_file} -S",
-            shell=True, capture_output=True, text=True,
+            ["opt", f"-passes={pass_name}", ir_file, "-S"],
+            capture_output=True, text=True,
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
         )
         transformed = workdir_path / "__transformed.ll"
         transformed.write_text(opt_out.stdout)
 
         p = subprocess.run(
-            f"{config.ALIVE2_BIN} --disable-undef-input {alive2_args} {ir_file} __transformed.ll",
-            shell=True, capture_output=True, text=True,
+            [str(config.ALIVE2_BIN), "--disable-undef-input"]
+            + shlex.split(alive2_args) + [ir_file, "__transformed.ll"],
+            capture_output=True, text=True,
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
         )
         output = p.stderr + p.stdout
@@ -185,9 +239,11 @@ def _download_attachments(body, wd):
     for url, filename in extract.find_attachment_urls(body):
         if not filename.lower().endswith((".ll", ".c", ".cpp", ".cxx")):
             continue
+        # Prefix to avoid collisions with pipeline output files (result.json, etc.).
+        safe_name = f"attach_{filename}"
         try:
-            github.download_attachment(url, str(wd / filename))
-            log.info("attachment downloaded: %s", filename)
+            github.download_attachment(url, str(wd / safe_name))
+            log.info("attachment downloaded: %s", safe_name)
         except Exception:
             log.exception("attachment download failed: %s", filename)
 
@@ -256,6 +312,14 @@ def reprocess_issue(issue):
 
     log.info("issue=%d review=%s", issue_id, json.dumps(verdict))
 
+    try:
+        _validate_verdict(verdict)
+    except ValueError:
+        log.warning("issue=%d review.json validation failed", issue_id)
+        mark_processed(issue_id)
+        workdir.cleanup(issue_id)
+        return
+
     if verdict.get("type") == "unrelated" or verdict.get("malicious"):
         log.info("issue=%d skipped: type=%s malicious=%s",
                  issue_id, verdict.get("type"), verdict.get("malicious"))
@@ -286,6 +350,14 @@ def reprocess_issue(issue):
     else:
         meta = {}
     log.info("issue=%d extract=%s", issue_id, json.dumps(meta))
+
+    try:
+        _validate_meta(meta)
+    except ValueError:
+        log.warning("issue=%d extract.json validation failed", issue_id)
+        mark_processed(issue_id)
+        workdir.cleanup(issue_id)
+        return
 
     # Step 4: reduction
     reduce_prompt = read_prompt("reducer.txt").format(

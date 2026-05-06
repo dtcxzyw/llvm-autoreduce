@@ -6,6 +6,10 @@ import re
 log = logging.getLogger(__name__)
 
 GODBOLT_PATTERN = re.compile(r"https?://godbolt\.org/z/(\w+)")
+# NOTE: This regex uses non-greedy matching and assumes well-formed markdown.
+# Known limitations: (a) code blocks containing literal ``` inside them will
+# be truncated, (b) trailing unclosed fence causes the block to be missed.
+# These are rare in LLVM bug reports and a full markdown parser is overkill.
 CODE_BLOCK_PATTERN = re.compile(r"```(?:llvm|c|cpp|c\+\+|cxx|ir)?\s*\n(.*?)```", re.DOTALL)
 ATTACHMENT_PATTERN = re.compile(r"!\[.*?\]\((https://githubusercontent[^)]+/([^/)]+))")
 
@@ -32,7 +36,14 @@ def classify_lang(content):
 
 
 def guess_extension(lang):
-    return {"ir": ".ll", "cpp": ".cpp", "c": ".c"}.get(lang, ".ll")
+    lang = lang.lower()
+    if lang in ("ir", "llvm", "llvm_ir"):
+        return ".ll"
+    if lang in ("cpp", "c++", "cxx", "hpp", "h++"):
+        return ".cpp"
+    if lang in ("c", "h"):
+        return ".c"
+    return ".ll"
 
 
 def assemble_reproducers(body, godbolt_sources, attachment_dir):
@@ -47,8 +58,17 @@ def assemble_reproducers(body, godbolt_sources, attachment_dir):
         name = f"inline_{i + 1}{guess_extension(lang)}"
         sources.append((name, block, lang))
 
-    for full_url, filename in find_attachment_urls(body):
+    for _full_url, filename in find_attachment_urls(body):
         if filename.lower().endswith((".ll", ".c", ".cpp", ".cxx")):
-            sources.append((filename, full_url, "attachment"))
+            safe_name = f"attach_{filename}"
+            filepath = attachment_dir / safe_name
+            if filepath.exists():
+                try:
+                    content = filepath.read_text()
+                except Exception:
+                    log.warning("failed to read attachment: %s", safe_name)
+                    continue
+                lang = classify_lang(content)
+                sources.append((safe_name, content, lang))
 
     return sources

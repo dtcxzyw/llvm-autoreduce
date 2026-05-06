@@ -48,6 +48,10 @@ opt -opt-bisect-limit=M-1 -passes='<pipeline>' repro.ll -S > before.ll
 
 ### 5. llvm-reduce
 
+<!-- NOTE: llvm-reduce executes the interestingness.sh script generated below. -->
+<!-- This is an accepted risk — the workdir is isolated and the security -->
+<!-- reviewer screens reproducer content before this stage is reached. -->
+
 **llubi_legacy oracle:**
 ```
 cat > interestingness.sh <<'SCRIPT'

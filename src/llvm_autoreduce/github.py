@@ -16,9 +16,21 @@ HEADERS = {
 
 
 def _request(method, url, **kwargs):
-    resp = requests.request(method, url, headers=HEADERS, **kwargs)
-    resp.raise_for_status()
-    return resp
+    last_exc = None
+    for attempt in range(3):
+        resp = requests.request(method, url, headers=HEADERS, **kwargs)
+        if resp.status_code in (403, 429):
+            retry_after = int(resp.headers.get("Retry-After", 2 ** attempt))
+            log.warning("rate-limited (%d), retry in %ds (attempt %d/3)",
+                        resp.status_code, retry_after, attempt + 1)
+            time.sleep(retry_after)
+            last_exc = requests.HTTPError(
+                f"{resp.status_code} rate limited", response=resp
+            )
+            continue
+        resp.raise_for_status()
+        return resp
+    raise last_exc
 
 
 def fetch_issues():
