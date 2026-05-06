@@ -524,7 +524,7 @@ def reprocess_issue(issue):
         return
     log.info("issue=%d verify pass", issue_id)
 
-    # Step 5: submit
+    # Step 6: submit
     report = workdir.read(wd / "report.md")
     report_title = f"[Reduced] {meta['bug_type']} — #{issue_id}"
     url = github.create_issue(report_title, report)
