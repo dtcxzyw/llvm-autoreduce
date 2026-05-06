@@ -41,9 +41,11 @@ If crash is in llc or lli (not opt), skip bisect and go directly to llvm-reduce 
 # llvm-reduce executes the script to test interestingness — this is an
 # accepted risk because (a) the workdir is isolated and (b) the security
 # reviewer has already screened reproducer content before reaching this stage.
+# NOTE: grep -F treats the signature as a literal (fixed) string, not a
+# regex. The crash_pattern from extract.json is a plain text fragment.
 cat > interestingness.sh <<'EOF'
 #!/bin/bash
-opt -passes='<pass>' "$1" 2>&1 | grep -q "<signature>"
+opt -passes='<pass>' "$1" 2>&1 | grep -qF "<signature>"
 EOF
 chmod +x interestingness.sh
 llvm-reduce --test=interestingness.sh before.ll

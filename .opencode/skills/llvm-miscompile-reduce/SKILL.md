@@ -51,6 +51,10 @@ opt -opt-bisect-limit=M-1 -passes='<pipeline>' repro.ll -S > before.ll
 <!-- NOTE: llvm-reduce executes the interestingness.sh script generated below. -->
 <!-- This is an accepted risk — the workdir is isolated and the security -->
 <!-- reviewer screens reproducer content before this stage is reached. -->
+<!-- NOTE: re-running llubi_legacy on repro.ll inside the llubi test script -->
+<!-- below is a known performance hit — the reference output is recomputed -->
+<!-- for every llvm-reduce candidate. Accepted trade-off to keep the test -->
+<!-- script self-contained and stateless, avoiding stale-reference bugs. -->
 
 **llubi_legacy oracle:**
 ```

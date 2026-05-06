@@ -200,6 +200,9 @@ def verify_llubi(result, workdir_path):
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
             preexec_fn=_set_limits,
         )
+        if opt_out.returncode != 0:
+            log.error("llubi opt failed: %s", opt_out.stderr[:200])
+            return False
         transformed = workdir_path / "__transformed.ll"
         transformed.write_text(opt_out.stdout)
 
@@ -232,6 +235,9 @@ def verify_alive2(result, workdir_path):
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
             preexec_fn=_set_limits,
         )
+        if opt_out.returncode != 0:
+            log.error("alive2 opt failed: %s", opt_out.stderr[:200])
+            return False
         transformed = workdir_path / "__transformed.ll"
         transformed.write_text(opt_out.stdout)
 
@@ -505,7 +511,7 @@ def reprocess_issue(issue):
         workdir.cleanup(issue_id)
         return
 
-    # Step 4: verify before submitting
+    # Step 5: verify before submitting
     if not verify_extract_consistency(meta, result):
         log.warning("issue=%d extract-result consistency check failed", issue_id)
         mark_processed(issue_id)
