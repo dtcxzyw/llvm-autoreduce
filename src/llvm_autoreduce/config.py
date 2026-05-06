@@ -24,6 +24,9 @@ SOURCE_REPO = "llvm/llvm-project"
 TARGET_REPO = "dtcxzyw/llvm-autoreduce"
 
 REVIEW_TIMEOUT = 300
+# Single opencode reduction run typically completes in under 2 minutes
+# (opt-bisect-limit binary search + llvm-reduce on already-small inputs).
+# The generous ceiling accounts for API latency and verbose LLM reasoning.
 REDUCE_TIMEOUT = 900
 VERIFY_TIMEOUT = 120
 DAEMON_INTERVAL = 1800

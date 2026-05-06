@@ -6,26 +6,22 @@ from llvm_autoreduce.daemon import _validate_meta, _validate_result, _validate_v
 
 
 class TestValidateVerdict:
-    def test_crash_ok(self):
-        _validate_verdict({"valid": True, "type": "crash", "malicious": False})
+    def test_verdict_ok(self):
+        _validate_verdict({"valid": True, "malicious": False})
 
-    def test_miscompilation_ok(self):
-        _validate_verdict({"valid": True, "type": "miscompilation", "malicious": False})
+    def test_malicious_true_ok(self):
+        _validate_verdict({"valid": True, "malicious": True})
 
-    def test_unrelated_ok(self):
-        _validate_verdict({"valid": True, "type": "unrelated", "malicious": False})
-
-    def test_invalid_type_raises(self):
-        with pytest.raises(ValueError, match="review.json type"):
-            _validate_verdict({"valid": True, "type": "malware"})
-
-    def test_empty_type_raises(self):
-        with pytest.raises(ValueError, match="review.json type"):
-            _validate_verdict({"valid": True, "type": ""})
+    def test_malicious_missing_ok(self):
+        _validate_verdict({"valid": True})
 
     def test_valid_not_true_raises(self):
         with pytest.raises(ValueError, match="valid is not True"):
-            _validate_verdict({"valid": False, "type": "crash"})
+            _validate_verdict({"valid": False})
+
+    def test_valid_missing_raises(self):
+        with pytest.raises(ValueError, match="valid is not True"):
+            _validate_verdict({})
 
 
 class TestValidateMeta:
@@ -33,7 +29,7 @@ class TestValidateMeta:
         _validate_meta({
             "bug_type": "crash",
             "reproducer_file": "inline_1.ll",
-            "crash_pattern": "Assertion.*failed",
+            "crash_pattern": "failed at LICM.cpp",
             "pipeline": "-passes='default<O2>'",
         })
 

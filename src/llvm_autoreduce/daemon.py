@@ -5,6 +5,7 @@ import atexit
 import json
 import logging
 import os
+import resource
 import shlex
 import shutil
 import signal
@@ -57,7 +58,10 @@ def mark_processed(issue_id):
     # race on processed.json, leading to duplicate processing or data loss.
     processed = set()
     if config.PROCESSED.exists():
-        processed = set(json.loads(config.PROCESSED.read_text()))
+        try:
+            processed = set(json.loads(config.PROCESSED.read_text()))
+        except (json.JSONDecodeError, OSError):
+            log.warning("processed.json corrupt, resetting")
     processed.add(str(issue_id))
     tmp = config.PROCESSED.with_suffix(".tmp")
     tmp.write_text(json.dumps(sorted(processed)))
@@ -75,20 +79,26 @@ def read_prompt(name):
     return path.read_text()
 
 
+def _set_limits():
+    """Set resource limits on child processes to prevent OOM."""
+    try:
+        # 8 GB address space — enough for opt/llc/llvm-reduce on reduced IR.
+        limit = 8 * 1024 ** 3
+        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+    except (ValueError, OSError):
+        pass
+
+
 VALID_BUG_TYPES = frozenset({"crash", "miscompilation"})
-
-
-EXPECTED_VERDICT_TYPES = frozenset({"crash", "miscompilation", "unrelated"})
 
 
 def _validate_verdict(verdict):
     """Reject review.json with unexpected values to prevent prompt injection."""
-    valid = verdict.get("valid")
-    if valid is not True:
-        raise ValueError(f"review.json valid is not True: {valid!r}")
-    bug_type = verdict.get("type", "")
-    if bug_type not in EXPECTED_VERDICT_TYPES:
-        raise ValueError(f"review.json type not in {EXPECTED_VERDICT_TYPES}: {bug_type!r}")
+    if verdict.get("valid") is not True:
+        raise ValueError(f"review.json valid is not True: {verdict.get('valid')!r}")
+    malicious = verdict.get("malicious")
+    if malicious is not None and malicious not in (True, False):
+        raise ValueError(f"review.json malicious is not bool: {malicious!r}")
 
 
 def _validate_meta(meta):
@@ -146,6 +156,7 @@ def verify_crash(result, workdir_path):
         p = subprocess.run(
             cmd, capture_output=True, text=True,
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
+            preexec_fn=_set_limits,
         )
     except subprocess.TimeoutExpired:
         log.error("verify crash timeout")
@@ -172,6 +183,7 @@ def verify_llubi(result, workdir_path):
             [str(config.LLUBI_BIN)] + shlex.split(llubi_args) + [safe_ir],
             capture_output=True, text=True,
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
+            preexec_fn=_set_limits,
         )
         if ref.returncode != 0:
             log.error("llubi ref failed: %s", ref.stderr[:200])
@@ -181,6 +193,7 @@ def verify_llubi(result, workdir_path):
             ["opt"] + shlex.split(args) + [safe_ir, "-S"],
             capture_output=True, text=True,
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
+            preexec_fn=_set_limits,
         )
         transformed = workdir_path / "__transformed.ll"
         transformed.write_text(opt_out.stdout)
@@ -189,6 +202,7 @@ def verify_llubi(result, workdir_path):
             [str(config.LLUBI_BIN)] + shlex.split(llubi_args) + ["__transformed.ll"],
             capture_output=True, text=True,
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
+            preexec_fn=_set_limits,
         )
         return ref.stdout != test.stdout
     except subprocess.TimeoutExpired:
@@ -211,6 +225,7 @@ def verify_alive2(result, workdir_path):
             ["opt"] + shlex.split(args) + [safe_ir, "-S"],
             capture_output=True, text=True,
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
+            preexec_fn=_set_limits,
         )
         transformed = workdir_path / "__transformed.ll"
         transformed.write_text(opt_out.stdout)
@@ -220,14 +235,10 @@ def verify_alive2(result, workdir_path):
             + shlex.split(alive2_args) + [safe_ir, "__transformed.ll"],
             capture_output=True, text=True,
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
+            preexec_fn=_set_limits,
         )
         output = p.stderr + p.stdout
-        if p.returncode == 0 or "Transformation seems to be correct!" in output:
-            return False  # correct, no miscompilation
-        if p.returncode == 1:
-            return True   # counterexample found
-        log.error("verify alive2 unexpected exit: %d", p.returncode)
-        return False
+        return "Transformation seems to be correct!" not in output
     except subprocess.TimeoutExpired:
         log.error("verify alive2 timeout")
         return False
@@ -314,8 +325,8 @@ def reprocess_issue(issue):
         return
 
     log.info("issue=%d processing", issue_id)
-    body = github.get_issue_body(issue_id) or ""
-    title = github.get_issue_title(issue_id)
+    title, body = github.get_issue_info(issue_id)
+    body = body or ""
 
     if not body.strip():
         log.info("issue=%d empty body, skip", issue_id)
@@ -388,9 +399,8 @@ def reprocess_issue(issue):
         workdir.cleanup(issue_id)
         return
 
-    if verdict.get("type") == "unrelated" or verdict.get("malicious"):
-        log.info("issue=%d skipped: type=%s malicious=%s",
-                 issue_id, verdict.get("type"), verdict.get("malicious"))
+    if verdict.get("malicious"):
+        log.info("issue=%d skipped: malicious", issue_id)
         mark_processed(issue_id)
         workdir.cleanup(issue_id)
         return
@@ -450,7 +460,7 @@ def reprocess_issue(issue):
     #        silently fail reduction.
     reduce_prompt = read_prompt("reducer.txt").format(
         issue_file="issue.md",
-        verdict_type=verdict["type"],
+        verdict_type=meta["bug_type"],
         reproducer_file=meta.get("reproducer_file", "repro.ll"),
         crash_pattern=meta.get("crash_pattern", ""),
         pipeline=meta.get("pipeline", "-passes='default<O2>'"),
@@ -505,7 +515,7 @@ def reprocess_issue(issue):
 
     # Step 5: submit
     report = workdir.read(wd / "report.md")
-    report_title = f"[Reduced] {verdict['type']} — #{issue_id}"
+    report_title = f"[Reduced] {meta['bug_type']} — #{issue_id}"
     url = github.create_issue(report_title, report)
     log.info("issue=%d submitted %s", issue_id, url)
 

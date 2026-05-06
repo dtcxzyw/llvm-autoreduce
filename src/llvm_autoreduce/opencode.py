@@ -10,14 +10,21 @@ log = logging.getLogger(__name__)
 
 
 def _env():
-    env = os.environ.copy()
-    # Never leak the GitHub token to subprocess agents that have bash access.
-    env.pop("AUTOREDUCE_TOKEN", None)
+    # Start with a minimal environment — only preserve essential variables
+    # plus any opencode-specific configuration. This prevents sensitive
+    # host variables (AWS keys, DB passwords, etc.) from leaking to
+    # subprocess agents that have bash access.
+    env = {}
+    for key in ("HOME", "USER", "PATH", "TERM", "SHELL", "LANG", "LC_ALL"):
+        if key in os.environ:
+            env[key] = os.environ[key]
+    for key, val in os.environ.items():
+        if key.startswith("OPENCODE_"):
+            env[key] = val
     paths = [str(PROJECT_ROOT / "work" / "llvm-trunk" / "build" / "bin"),
              str(PROJECT_ROOT / "work" / "alive2-trunk" / "build" / "bin"),
              str(PROJECT_ROOT / "work" / "llubi-trunk" / "build" / "bin")]
-    existing = env.get("PATH", "")
-    env["PATH"] = ":".join(paths + [existing])
+    env["PATH"] = ":".join(paths + [os.environ.get("PATH", "")])
     return env
 
 

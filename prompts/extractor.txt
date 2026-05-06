@@ -12,6 +12,6 @@ Write your findings to `extract.json` in this exact format:
 {{
   "bug_type": "crash",
   "reproducer_file": "filename.ll",
-  "crash_pattern": "literal substring from crash output, or empty string",
+  "crash_pattern": "a literal text fragment from the crash output (substring, NOT a regex — e.g. \"failed at LICM.cpp\" not \"failed.*LICM\"), or empty string for miscompilation",
   "pipeline": "-passes='...'"
 }}

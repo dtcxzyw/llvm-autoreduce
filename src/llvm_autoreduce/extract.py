@@ -11,7 +11,7 @@ GODBOLT_PATTERN = re.compile(r"https?://godbolt\.org/z/(\w+)")
 # be truncated, (b) trailing unclosed fence causes the block to be missed.
 # These are rare in LLVM bug reports and a full markdown parser is overkill.
 CODE_BLOCK_PATTERN = re.compile(r"```(?:llvm|c|cpp|c\+\+|cxx|ir)?\s*\n(.*?)```", re.DOTALL)
-ATTACHMENT_PATTERN = re.compile(r"!\[.*?\]\((https://githubusercontent[^)]+/([^/)]+))")
+ATTACHMENT_PATTERN = re.compile(r"!\[.*?\]\((https://githubusercontent\.com/[^)]+/([^/)]+))")
 
 
 def find_godbolt_links(body):

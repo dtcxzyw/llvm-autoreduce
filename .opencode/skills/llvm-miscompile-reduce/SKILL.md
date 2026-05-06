@@ -80,6 +80,7 @@ Then: `chmod +x interestingness.sh && llvm-reduce --test=interestingness.sh befo
 {
   "type": "miscompilation",
   "tool": "opt",
+  "args": "-passes=gvn",
   "pass_name": "gvn",
   "ir_file": "reduced.ll",
   "reference_file": "repro.ll",

@@ -32,18 +32,18 @@ class TestGodboltLinks:
 
 class TestAttachmentUrls:
     def test_basic(self):
-        body = "![screenshot](https://githubusercontent/1234/file.ll)"
+        body = "![screenshot](https://githubusercontent.com/1234/file.ll)"
         result = find_attachment_urls(body)
         assert len(result) == 1
-        assert result[0] == ("https://githubusercontent/1234/file.ll", "file.ll")
+        assert result[0] == ("https://githubusercontent.com/1234/file.ll", "file.ll")
 
     def test_no_attachments(self):
         assert find_attachment_urls("no attachments") == []
 
     def test_multiple(self):
         body = (
-            "![a](https://githubusercontent/a/bug.ll)\n"
-            "![b](https://githubusercontent/c/test.c)"
+            "![a](https://githubusercontent.com/a/bug.ll)\n"
+            "![b](https://githubusercontent.com/c/test.c)"
         )
         result = find_attachment_urls(body)
         assert len(result) == 2
@@ -154,12 +154,12 @@ class TestAssembleReproducers:
         assert name == "inline_1.ll"
 
     def test_attachment_skipped_if_missing(self, tmp_path):
-        body = "![bug](https://githubusercontent/x/missing.ll)"
+        body = "![bug](https://githubusercontent.com/x/missing.ll)"
         sources = assemble_reproducers(body, [], tmp_path)
         assert len(sources) == 0
 
     def test_attachment_read(self, tmp_path):
-        body = "![file](https://githubusercontent/x/test.ll)"
+        body = "![file](https://githubusercontent.com/x/test.ll)"
         (tmp_path / "attach_test.ll").write_text("define i32 @main() { ret i32 0 }")
         sources = assemble_reproducers(body, [], tmp_path)
         assert len(sources) == 1
@@ -169,12 +169,12 @@ class TestAssembleReproducers:
         assert "define i32 @main()" in content
 
     def test_attachment_non_code_ext_skipped(self, tmp_path):
-        body = "![img](https://githubusercontent/x/photo.png)"
+        body = "![img](https://githubusercontent.com/x/photo.png)"
         sources = assemble_reproducers(body, [], tmp_path)
         assert len(sources) == 0
 
     def test_mixed_sources(self, tmp_path):
-        body = "```c\nint x;\n```\n![f](https://githubusercontent/x/file.ll)"
+        body = "```c\nint x;\n```\n![f](https://githubusercontent.com/x/file.ll)"
         (tmp_path / "attach_file.ll").write_text("define void @h() { ret void }")
         godbolt = [("void f() {}", "cpp")]
         sources = assemble_reproducers(body, godbolt, tmp_path)

@@ -2,15 +2,9 @@ Read `{issue_file}` for the bug report and `{reproducer_file}` for all reproduce
 
 Check ALL reproducer content for malicious patterns (system/exec/fork/popen calls, file tampering, network operations, obfuscated shell commands, suspicious includes).
 
-Classify the bug type:
-- `crash`: opt/llc/lli crash (NOT clang frontend)
-- `miscompilation`: wrong code generation
-- `unrelated`: everything else
-
 Write your verdict to `review.json` in this exact format:
 {{
   "valid": true,
   "malicious": false,
-  "type": "crash",
   "reason": "short explanation"
 }}

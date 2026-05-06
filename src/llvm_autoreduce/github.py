@@ -45,16 +45,11 @@ def fetch_issues():
     return resp.json()
 
 
-def get_issue_body(issue_number):
+def get_issue_info(issue_number):
     url = f"{GITHUB_API}/repos/{SOURCE_REPO}/issues/{issue_number}"
     resp = _request("GET", url)
-    return resp.json()["body"] or ""
-
-
-def get_issue_title(issue_number):
-    url = f"{GITHUB_API}/repos/{SOURCE_REPO}/issues/{issue_number}"
-    resp = _request("GET", url)
-    return resp.json()["title"]
+    data = resp.json()
+    return data["title"], data["body"] or ""
 
 
 def download_attachment(url, dest_path, max_size=10240):
