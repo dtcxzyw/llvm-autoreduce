@@ -48,5 +48,5 @@
 - Use specific Conventional Commits for every commit. When a commit is non-trivial, include a body describing what changed, why it changed, and what validation was performed; make the subject identify the precise logical unit and the body record the concrete scope of the change.
 - Split commits by logical unit so they stay focused and reviewable.
 - Ensure relevant tests pass before creating a commit, assume pre-commit hooks will run, and do not bypass them with `--no-verify`.
-- When auditing code or reporting findings, do not re-report issues that are already annotated as `ACCEPTED RISK` in source code comments.
-- Do not consider multi-daemon scenarios, race conditions, or parallel execution in design or audit work. The daemon is designed to run as a single instance.
+- **CRITICAL — ACCEPTED RISK:** When auditing code or reporting findings, you MUST NOT report issues that are already explicitly annotated with `ACCEPTED RISK` in source code comments. These are known, deliberate trade-offs. Re-reporting them is noise and wastes review time. Before including any finding in an audit, verify it is NOT tagged `ACCEPTED RISK` in the relevant source file.
+- Do not consider multi-daemon scenarios, race conditions, or parallel execution in design or audit work. The daemon is designed to run as a single instance. Do not raise findings that only apply to concurrent or multi-threaded execution — the daemon processes issues sequentially in a single thread.
