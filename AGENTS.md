@@ -48,3 +48,4 @@
 - Use specific Conventional Commits for every commit. When a commit is non-trivial, include a body describing what changed, why it changed, and what validation was performed; make the subject identify the precise logical unit and the body record the concrete scope of the change.
 - Split commits by logical unit so they stay focused and reviewable.
 - Ensure relevant tests pass before creating a commit, assume pre-commit hooks will run, and do not bypass them with `--no-verify`.
+- When auditing code or reporting findings, do not re-report issues that are already annotated as `ACCEPTED RISK` in source code comments.
