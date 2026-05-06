@@ -1,16 +1,16 @@
-"""GitHub API client using GITHUB_TOKEN authentication."""
+"""GitHub API client using AUTOREDUCE_TOKEN authentication."""
 
 import logging
 import time
 
 import requests
 
-from .config import GITHUB_API, GITHUB_TOKEN, ISSUES_PER_ROUND, SOURCE_REPO, TARGET_REPO
+from .config import AUTOREDUCE_TOKEN, GITHUB_API, ISSUES_PER_ROUND, SOURCE_REPO, TARGET_REPO
 
 log = logging.getLogger(__name__)
 
 HEADERS = {
-    "Authorization": f"Bearer {GITHUB_TOKEN}",
+    "Authorization": f"Bearer {AUTOREDUCE_TOKEN}",
     "Accept": "application/vnd.github.v3+json",
 }
 
@@ -41,7 +41,7 @@ def get_issue_title(issue_number):
 
 
 def download_attachment(url, dest_path):
-    resp = _request("GET", url, headers={"Authorization": f"Bearer {GITHUB_TOKEN}", "Accept": "application/octet-stream"})
+    resp = _request("GET", url, headers={"Authorization": f"Bearer {AUTOREDUCE_TOKEN}", "Accept": "application/octet-stream"})
     with open(dest_path, "wb") as f:
         f.write(resp.content)
 

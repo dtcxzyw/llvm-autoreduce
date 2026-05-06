@@ -13,4 +13,6 @@ Follow the llvm-autoreduce skill workflow to:
 5. Verify the reduced IR still reproduces the bug
 6. Write `result.json` and `report.md`
 
-All LLVM tools (opt, clang, llc, lli, llvm-reduce, alive-tv, llubi_legacy) are on PATH. Use bash for all commands. Put temporary files in the current working directory — never in /tmp.
+All LLVM tools (opt, clang, llc, lli, llvm-reduce, alive-tv, llubi_legacy) are on PATH. Use bash for all commands.
+
+CRITICAL: Do not read or write any files outside the current working directory. All temporary files, intermediate outputs, interestingness scripts, and final results must stay within the current working directory. Never use /tmp, /home, /etc, /var, or any other system path. This is a strict security requirement.

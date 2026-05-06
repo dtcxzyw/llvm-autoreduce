@@ -131,6 +131,33 @@ def verify(result, workdir_path):
     return False
 
 
+def verify_extract_consistency(meta, result):
+    """Cross-check extract.json metadata against reduce result.json."""
+    bug_type = meta.get("bug_type", "")
+    result_type = result.get("type", "")
+    if bug_type and result_type and bug_type != result_type:
+        log.warning("bug_type mismatch: extract=%s result=%s", bug_type, result_type)
+        return False
+
+    crash_pattern = meta.get("crash_pattern", "")
+    if bug_type == "crash" and not crash_pattern:
+        log.warning("extract bug_type=crash but crash_pattern is empty")
+        return False
+    if bug_type == "miscompilation" and crash_pattern:
+        log.warning("extract bug_type=miscompilation but crash_pattern is non-empty")
+        return False
+
+    if result_type == "crash":
+        result_pattern = result.get("crash_pattern", "")
+        if crash_pattern and result_pattern and crash_pattern != result_pattern:
+            log.warning(
+                "crash_pattern mismatch: extract=%s result=%s",
+                crash_pattern, result_pattern,
+            )
+            # non-fatal: reducer may have refined the pattern, just warn
+    return True
+
+
 def _fetch_godbolt(body):
     links = extract.find_godbolt_links(body)
     if not links:
@@ -296,6 +323,11 @@ def reprocess_issue(issue):
         return
 
     # Step 4: verify before submitting
+    if not verify_extract_consistency(meta, result):
+        log.warning("issue=%d extract-result consistency check failed", issue_id)
+        mark_processed(issue_id)
+        workdir.cleanup(issue_id)
+        return
     if not verify(result, wd):
         log.warning("issue=%d verify failed", issue_id)
         mark_processed(issue_id)
@@ -315,8 +347,8 @@ def reprocess_issue(issue):
 
 def main():
     setup_logging()
-    if not config.GITHUB_TOKEN:
-        log.critical("GITHUB_TOKEN environment variable is required")
+    if not config.AUTOREDUCE_TOKEN:
+        log.critical("AUTOREDUCE_TOKEN environment variable is required")
         sys.exit(1)
     log.info("llvm-autoreduce daemon starting")
 

@@ -18,7 +18,7 @@ KNOWN_GOOD = WORK_ROOT / ".known-good"
 PROCESSED = WORK_ROOT / "processed.json"
 DAEMON_LOG = WORK_ROOT / "daemon.log"
 
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+AUTOREDUCE_TOKEN = os.environ.get("AUTOREDUCE_TOKEN", "")
 GITHUB_API = "https://api.github.com"
 SOURCE_REPO = "llvm/llvm-project"
 TARGET_REPO = "dtcxzyw/llvm-autoreduce"

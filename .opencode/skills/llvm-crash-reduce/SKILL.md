@@ -78,4 +78,4 @@ Run the pass on `reduced.ll`, confirm crash signature still matches.
 
 ## Error handling
 - If any step fails, write error to result.json `{"error": "..."}` and to report.md
-- All files stay in current workdir, never /tmp
+- CRITICAL: All files stay in current working directory, never /tmp, /home, /etc, /var, or any other system path

@@ -52,9 +52,9 @@ opt -opt-bisect-limit=M-1 -passes='<pipeline>' repro.ll -S > before.ll
 ```
 cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
-llubi_legacy --max-steps 1000000 repro.ll > /tmp/ref.$$
-opt -passes='<pass>' "$1" -S | llubi_legacy --max-steps 1000000 - > /tmp/test.$$
-! diff -q /tmp/ref.$$ /tmp/test.$$
+llubi_legacy --max-steps 1000000 repro.ll > ref_ubi.txt
+opt -passes='<pass>' "$1" -S | llubi_legacy --max-steps 1000000 - > test_ubi.txt
+! diff -q ref_ubi.txt test_ubi.txt
 SCRIPT
 ```
 
@@ -62,8 +62,8 @@ SCRIPT
 ```
 cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
-opt -passes='<pass>' "$1" -S > /tmp/opt.$$
-alive-tv --disable-undef-input --smt-to=10000 "$1" /tmp/opt.$$ 2>&1 | grep -qv "Transformation seems to be correct!"
+opt -passes='<pass>' "$1" -S > opt_output.ll
+alive-tv --disable-undef-input --smt-to=10000 "$1" opt_output.ll 2>&1 | grep -qv "Transformation seems to be correct!"
 SCRIPT
 ```
 
@@ -104,4 +104,4 @@ Then: `chmod +x interestingness.sh && llvm-reduce --test=interestingness.sh befo
 - Oracle crash on original IR: try the other oracle
 - x86 verification fails: abort, write `{"error": "not x86 reproducible"}` to result.json
 - Write errors to result.json and report.md
-- All files stay in current workdir, never /tmp
+- CRITICAL: All files stay in current working directory, never /tmp, /home, /etc, /var, or any other system path
