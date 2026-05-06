@@ -66,6 +66,10 @@ def assemble_reproducers(body, godbolt_sources, attachment_dir):
                 try:
                     content = filepath.read_text()
                 except Exception:
+                    # ACCEPTED RISK (F7): Attachment read failures (encoding
+                    # errors, permission) are silently skipped. The caller
+                    # receives no indication that an attachment was dropped.
+                    # These are rare in practice and individually non-critical.
                     log.warning("failed to read attachment: %s", safe_name)
                     continue
                 lang = classify_lang(content)

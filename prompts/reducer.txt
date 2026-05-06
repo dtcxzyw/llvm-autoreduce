@@ -3,7 +3,7 @@ You are an LLVM bug reduction agent. Your working directory contains `{issue_fil
 Bug type: {verdict_type}
 Primary reproducer file: {reproducer_file}
 Opt pipeline: {pipeline}
-Crash pattern: {crash_pattern}
+Crash signature (literal substring, not regex): {crash_pattern}
 
 Follow the llvm-autoreduce skill workflow to:
 1. Reproduce the bug using the reproducer file and pipeline above

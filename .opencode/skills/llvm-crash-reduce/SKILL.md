@@ -9,7 +9,7 @@ All LLVM tools are on PATH: `opt`, `llc`, `lli`, `llvm-reduce`, `clang`, `alive-
 ## Crash Reduction Pipeline
 
 ### 1. Reproduce the crash
-Run the crash command from the issue. Extract a crash signature (e.g., "Assertion `X && Y` failed at Pass.cpp:1234").
+Run the crash command from the issue. Extract a literal crash signature substring (e.g., "Assertion `X && Y") — plain text, not regex.
 
 ### 2. Build opt pipeline
 If the issue gives a specific pass, use it directly. Otherwise try `-passes='default<O2>'` or `-passes='default<O3>'`.
@@ -62,7 +62,7 @@ Run the pass on `reduced.ll`, confirm crash signature still matches.
   "tool": "opt",
   "cmd_args": "-passes=licm",
   "ir_file": "reduced.ll",
-  "crash_pattern": "Assertion.*failed"
+  "crash_pattern": "Assertion `X && Y"
 }
 ```
 

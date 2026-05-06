@@ -49,3 +49,4 @@
 - Split commits by logical unit so they stay focused and reviewable.
 - Ensure relevant tests pass before creating a commit, assume pre-commit hooks will run, and do not bypass them with `--no-verify`.
 - When auditing code or reporting findings, do not re-report issues that are already annotated as `ACCEPTED RISK` in source code comments.
+- Do not consider multi-daemon scenarios, race conditions, or parallel execution in design or audit work. The daemon is designed to run as a single instance.

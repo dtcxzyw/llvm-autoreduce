@@ -5,13 +5,13 @@ CRITICAL: Do not read or write any files outside the current working directory. 
 Your job:
 1. Classify the bug type: `crash` (opt/llc/lli crash), `miscompilation` (wrong code), or `unrelated`
 2. Identify the primary reproducer file name
-3. Extract a crash pattern regex from the crash output (empty string for miscompilation)
+3. Extract a literal substring from the crash output that uniquely identifies this crash (empty string for miscompilation). Do NOT use regex — produce a plain text fragment.
 4. Determine the opt pipeline from the issue
 
 Write your findings to `extract.json` in this exact format:
 {{
   "bug_type": "crash",
   "reproducer_file": "filename.ll",
-  "crash_pattern": "regex or empty string",
+  "crash_pattern": "literal substring from crash output, or empty string",
   "pipeline": "-passes='...'"
 }}

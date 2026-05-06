@@ -3,8 +3,8 @@
 
 import json
 import logging
-import re
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -89,6 +89,8 @@ def _validate_meta(meta):
         if any(c in pipeline for c in dangerous):
             raise ValueError(f"extract.json pipeline contains shell metacharacters: {pipeline!r}")
     crash_pattern = meta.get("crash_pattern", "")
+    # crash_pattern is a literal substring (not regex) matched against
+    # crash output via plain string containment.
     if crash_pattern and len(crash_pattern) > 2000:
         raise ValueError(f"extract.json crash_pattern too long: {len(crash_pattern)} chars")
 
@@ -105,6 +107,11 @@ def verify_crash(result, workdir_path):
     tool = result.get("tool", "opt")
     ir_file = result["ir_file"]
     _safe_relative(workdir_path, ir_file)
+    # ACCEPTED RISK (R5): result.json cmd_args comes from the reducer agent
+    # (which has bash access). List-based subprocess.run prevents shell
+    # injection but does not prevent argument injection into LLVM tools
+    # (e.g. -o /dev/null). This is acceptable because the reducer agent
+    # already has unrestricted bash access within the workdir.
     cmd = [tool] + shlex.split(result.get("cmd_args", "")) + [ir_file]
     try:
         p = subprocess.run(
@@ -117,8 +124,8 @@ def verify_crash(result, workdir_path):
     except OSError:
         log.exception("verify crash os error")
         return False
-    pattern = result.get("crash_pattern", "")
-    return bool(re.search(pattern, p.stderr + p.stdout, re.DOTALL))
+    needle = result.get("crash_pattern", "")
+    return needle in (p.stderr + p.stdout)
 
 
 def verify_llubi(result, workdir_path):
@@ -179,7 +186,12 @@ def verify_alive2(result, workdir_path):
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
         )
         output = p.stderr + p.stdout
-        return p.returncode != 0 and "Transformation seems to be correct!" not in output
+        if p.returncode == 0 or "Transformation seems to be correct!" in output:
+            return False  # correct, no miscompilation
+        if p.returncode == 1:
+            return True   # counterexample found
+        log.error("verify alive2 unexpected exit: %d", p.returncode)
+        return False
     except subprocess.TimeoutExpired:
         log.error("verify alive2 timeout")
         return False
@@ -457,6 +469,28 @@ def main():
     if not config.AUTOREDUCE_TOKEN:
         log.critical("AUTOREDUCE_TOKEN environment variable is required")
         sys.exit(1)
+
+    # Verify required binaries exist before entering the poll loop.
+    missing = []
+    for binary in ["opencode", "opt", "clang", "llc", "lli", "llvm-reduce"]:
+        path = shutil.which(binary)
+        if path is None:
+            missing.append(binary)
+        else:
+            log.info("found %s at %s", binary, path)
+    for binary in ["llubi_legacy", "alive-tv"]:
+        path = shutil.which(binary) or (
+            config.LLUBI_BIN if binary == "llubi_legacy" and config.LLUBI_BIN.exists() else
+            config.ALIVE2_BIN if binary == "alive-tv" and config.ALIVE2_BIN.exists() else None
+        )
+        if path is not None:
+            log.info("found %s at %s", binary, path)
+        else:
+            log.warning("%s not found on PATH — miscompilation oracles will fail", binary)
+    if missing:
+        log.critical("required binaries not found on PATH: %s", ", ".join(missing))
+        sys.exit(1)
+
     log.info("llvm-autoreduce daemon starting")
 
     while True:
