@@ -28,6 +28,15 @@ def _request(method, url, **kwargs):
                 f"{resp.status_code} rate limited", response=resp
             )
             continue
+        if resp.status_code >= 500:
+            retry_after = 2 ** attempt
+            log.warning("server error (%d), retry in %ds (attempt %d/3)",
+                        resp.status_code, retry_after, attempt + 1)
+            time.sleep(retry_after)
+            last_exc = requests.HTTPError(
+                f"{resp.status_code} server error", response=resp
+            )
+            continue
         resp.raise_for_status()
         return resp
     raise last_exc
@@ -52,6 +61,10 @@ def get_issue_info(issue_number):
     return data["title"], data["body"] or ""
 
 
+# NOTE: max_size=10240 (10 KB) is intentionally small. LLVM IR reproducers
+# that exceed this size are almost certainly not yet reduced and would
+# time out reduction anyway. Larger attachments from issue bodies should
+# be reduced manually or via a future two-phase reduction pipeline.
 def download_attachment(url, dest_path, max_size=10240):
     resp = _request("GET", url, headers={"Authorization": f"Bearer {AUTOREDUCE_TOKEN}", "Accept": "application/octet-stream"})
     content = resp.content

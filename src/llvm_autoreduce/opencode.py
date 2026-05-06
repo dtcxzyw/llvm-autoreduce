@@ -14,6 +14,10 @@ def _env():
     # plus any opencode-specific configuration. This prevents sensitive
     # host variables (AWS keys, DB passwords, etc.) from leaking to
     # subprocess agents that have bash access.
+    # NOTE: LC_CTYPE, LC_MESSAGES and other per-category locale vars are
+    # intentionally omitted. The broad LANG/LC_ALL pair covers all common
+    # locale needs. Adding more would expand the attack surface with
+    # negligible benefit.
     env = {}
     for key in ("HOME", "USER", "PATH", "TERM", "SHELL", "LANG", "LC_ALL"):
         if key in os.environ:

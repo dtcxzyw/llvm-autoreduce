@@ -71,7 +71,11 @@ def mark_processed(issue_id):
 def is_processed(issue_id):
     if not config.PROCESSED.exists():
         return False
-    return str(issue_id) in json.loads(config.PROCESSED.read_text())
+    try:
+        return str(issue_id) in json.loads(config.PROCESSED.read_text())
+    except (json.JSONDecodeError, OSError):
+        log.warning("processed.json corrupt during read, treating as empty")
+        return False
 
 
 def read_prompt(name):
@@ -132,7 +136,8 @@ def _validate_meta(meta):
 def _safe_relative(workdir_path, filename):
     """Resolve filename against workdir and reject path traversal."""
     resolved = (workdir_path / filename).resolve()
-    if not str(resolved).startswith(str(workdir_path.resolve())):
+    workdir_prefix = str(workdir_path.resolve()) + os.sep
+    if not str(resolved).startswith(workdir_prefix):
         raise ValueError(f"Path traversal rejected: {filename!r}")
     return str(resolved)
 
@@ -248,7 +253,7 @@ def verify_alive2(result, workdir_path):
 
 
 def verify(result, workdir_path):
-    if result["type"] == "crash":
+    if result.get("type") == "crash":
         return verify_crash(result, workdir_path)
     if result.get("oracle") == "llubi":
         return verify_llubi(result, workdir_path)

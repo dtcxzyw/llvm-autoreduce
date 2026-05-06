@@ -127,6 +127,9 @@ if [ ! -d "$WORK_DIR/llubi-trunk/.git" ]; then
 fi
 
 # ---- fetch latest ----
+# NOTE: branch names are hardcoded (main/master). If an upstream repo
+# renames its default branch, the clone+fetch logic must be updated here
+# and in the clone commands above.
 
 git -C "$WORK_DIR/llvm-trunk" fetch origin main
 git -C "$WORK_DIR/alive2-trunk" fetch origin master
