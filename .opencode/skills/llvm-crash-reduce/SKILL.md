@@ -60,8 +60,7 @@ Run the pass on `reduced.ll`, confirm crash signature still matches.
 {
   "type": "crash",
   "tool": "opt",
-  "pass_name": "licm",
-  "opt_args": "",
+  "cmd_args": "-passes=licm",
   "ir_file": "reduced.ll",
   "crash_pattern": "Assertion.*failed"
 }

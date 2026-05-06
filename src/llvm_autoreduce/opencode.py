@@ -23,6 +23,8 @@ def _env():
 
 def run(agent, workdir, prompt, timeout):
     log_path = workdir / "log.txt"
+    # ACCEPTED RISK (F6): Model name is hardcoded — not configurable via
+    # environment variable or config file.
     cmd = [
         "opencode",
         "--model", "deepseek/deepseek-v4-pro",

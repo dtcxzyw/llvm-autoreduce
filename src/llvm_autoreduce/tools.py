@@ -16,6 +16,11 @@ class BuildError(Exception):
 
 
 def update_all():
+    # ACCEPTED RISK (D2): No build artifact integrity verification.
+    # update-tools.sh clones from GitHub over HTTPS and invokes cmake
+    # --build directly with no GPG signature checks or hash pinning.
+    # The .known-good file records git hashes, which is insufficient
+    # against MITM attacks or compromised upstream repositories.
     log.info("toolchain update start")
     proc = subprocess.run(
         ["bash", str(UPDATE_SCRIPT)],

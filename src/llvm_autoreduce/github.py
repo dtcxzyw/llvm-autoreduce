@@ -34,6 +34,11 @@ def _request(method, url, **kwargs):
 
 
 def fetch_issues():
+    # ACCEPTED RISK (F4): No pagination — only the first page of
+    # ISSUES_PER_ROUND results is fetched. Issues beyond page 1 are
+    # never discovered by the daemon, even if they contain valid
+    # reproducers. For llvm/llvm-project this means only the 20 most
+    # recently updated open issues are ever considered.
     url = f"{GITHUB_API}/repos/{SOURCE_REPO}/issues"
     params = {"state": "open", "per_page": ISSUES_PER_ROUND, "sort": "updated", "direction": "desc"}
     resp = _request("GET", url, params=params)

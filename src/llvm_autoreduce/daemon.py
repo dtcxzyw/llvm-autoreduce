@@ -29,6 +29,8 @@ def setup_logging():
 
 
 def mark_processed(issue_id):
+    # ACCEPTED RISK (F5): No file locking — concurrent daemon instances may
+    # race on processed.json, leading to duplicate processing or data loss.
     processed = set()
     if config.PROCESSED.exists():
         processed = set(json.loads(config.PROCESSED.read_text()))
@@ -78,6 +80,11 @@ def _validate_meta(meta):
         # Shell metacharacters that could cause command injection. Note:
         # < > are intentionally excluded — they are part of LLVM pass syntax
         # (e.g. -passes='default<O2>') and are safe with list-based subprocess.
+        # ACCEPTED RISK (R4): The pipeline string passes through to the reducer
+        # agent's prompt, which has bash access. Agents may reinterpret < > as
+        # shell redirection when generating scripts. This validator only guards
+        # against direct process.Popen injection; downstream AI behavior is
+        # constrained only by natural-language prompts, not technical controls.
         dangerous = {"$", "`", ";", "|", "&", "(", ")", "{", "}"}
         if any(c in pipeline for c in dangerous):
             raise ValueError(f"extract.json pipeline contains shell metacharacters: {pipeline!r}")
@@ -98,10 +105,7 @@ def verify_crash(result, workdir_path):
     tool = result.get("tool", "opt")
     ir_file = result["ir_file"]
     _safe_relative(workdir_path, ir_file)
-    cmd = [tool, f"-passes={result['pass_name']}"]
-    if result.get("opt_args"):
-        cmd.extend(shlex.split(result["opt_args"]))
-    cmd.append(ir_file)
+    cmd = [tool] + shlex.split(result.get("cmd_args", "")) + [ir_file]
     try:
         p = subprocess.run(
             cmd, capture_output=True, text=True,
@@ -109,6 +113,9 @@ def verify_crash(result, workdir_path):
         )
     except subprocess.TimeoutExpired:
         log.error("verify crash timeout")
+        return False
+    except OSError:
+        log.exception("verify crash os error")
         return False
     pattern = result.get("crash_pattern", "")
     return bool(re.search(pattern, p.stderr + p.stdout, re.DOTALL))
@@ -146,6 +153,9 @@ def verify_llubi(result, workdir_path):
     except subprocess.TimeoutExpired:
         log.error("verify llubi timeout")
         return False
+    except OSError:
+        log.exception("verify llubi os error")
+        return False
 
 
 def verify_alive2(result, workdir_path):
@@ -172,6 +182,9 @@ def verify_alive2(result, workdir_path):
         return p.returncode != 0 and "Transformation seems to be correct!" not in output
     except subprocess.TimeoutExpired:
         log.error("verify alive2 timeout")
+        return False
+    except OSError:
+        log.exception("verify alive2 os error")
         return False
 
 
@@ -230,7 +243,7 @@ def _fetch_godbolt(body):
                 src = session.get("source", "")
                 if src.strip():
                     sources.append((src, lang))
-        except Exception:
+        except (requests.RequestException, json.JSONDecodeError):
             log.exception("godbolt fetch failed id=%s", short_id)
     return sources
 
@@ -244,7 +257,7 @@ def _download_attachments(body, wd):
         try:
             github.download_attachment(url, str(wd / safe_name))
             log.info("attachment downloaded: %s", safe_name)
-        except Exception:
+        except (requests.RequestException, OSError):
             log.exception("attachment download failed: %s", filename)
 
 
@@ -278,7 +291,15 @@ def reprocess_issue(issue):
         reproducer_texts.append(f"### File: {name}\n```\n{content[:8192]}\n```")
     workdir.write(wd / "reproducers.md", "\n\n".join(reproducer_texts))
 
-    # Step 2: security review (bash denied) — audit + classify
+    # Step 2: security review (bash denied) — audit + classify.
+    # ACCEPTED RISK: The security reviewer rejects only code-level malware patterns
+    # (system/exec/fork/popen etc.) in input reproducers. It does not defend against:
+    #   (R2) Indirect prompt injection — adversarial markdown in issue bodies may
+    #        instruct the agent to produce colluding review.json output.
+    #   (R3) AI-generated shell scripts — reducer agent later generates and runs
+    #        interestingness.sh (via llvm-reduce --test), which the security reviewer
+    #        never inspects. The reviewer's coverage is limited to the initial
+    #        reproducer content, not downstream AI artifact generation.
     review_prompt = read_prompt("security-reviewer.txt").format(
         issue_file="issue.md",
         reproducer_file="reproducers.md",
@@ -359,7 +380,21 @@ def reprocess_issue(issue):
         workdir.cleanup(issue_id)
         return
 
-    # Step 4: reduction
+    # Step 4: reduction.
+    # ACCEPTED RISKS:
+    #   (R1) No execution sandbox — the reducer agent has full bash access on the
+    #        host user account. It generates and executes shell scripts
+    #        (interestingness.sh) via llvm-reduce --test. No chroot, namespace,
+    #        seccomp, or container isolation is applied. Confinement relies
+    #        solely on natural-language instructions in prompts.
+    #   (F1) No retry on transient failures — if opencode.run returns non-zero
+    #        (timeout, API error, etc.), the issue is immediately marked as
+    #        processed and never retried. Temporary infrastructure errors
+    #        permanently skip valid issues.
+    #   (F3) Single reproducer file — only meta.reproducer_file is passed to
+    #        the reducer. Multi-file reproducer scenarios (e.g. inter-module
+    #        bugs requiring multiple .ll files) are not supported and will
+    #        silently fail reduction.
     reduce_prompt = read_prompt("reducer.txt").format(
         issue_file="issue.md",
         verdict_type=verdict["type"],
