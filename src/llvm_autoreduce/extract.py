@@ -27,31 +27,34 @@ def extract_code_blocks(body):
     return [(m.group(1), m.group(2).strip()) for m in CODE_BLOCK_PATTERN.finditer(body)]
 
 
-def extension_for_lang(lang):
-    lang = (lang or "").lower()
-    if lang in ("ir", "llvm", "llvm_ir"):
-        return ".ll"
-    if lang in ("cpp", "c++", "cxx", "hpp", "h++"):
-        return ".cpp"
-    if lang in ("c", "h"):
-        return ".c"
-    return ".ll"
+# ACCEPTED RISK (F14): File type identification is delegated to the extractor
+# agent. Filenames use raw language tags from the source (godbolt session
+# language field, markdown fence tag, or attachment filename) without a
+# centralized extension-mapping table. The extractor agent must inspect file
+# content (via `file` or by reading the first few lines) and use `clang -x` to
+# set the language dialect when compiling C/C++ sources. This avoids silent
+# miscategorisation (e.g. assembly files masquerading as .ll) and eliminates
+# the mapping-table maintenance burden.
+def _safe_ext(raw_tag):
+    if not raw_tag:
+        return "txt"
+    return raw_tag.strip().lower()
 
 
 def assemble_reproducers(body, godbolt_sources, attachment_dir):
     sources = []
 
-    for src, lang in godbolt_sources:
-        ext = extension_for_lang(lang)
-        sources.append((f"godbolt{ext}", src, lang))
+    for idx, (src, lang) in enumerate(godbolt_sources, 1):
+        ext = _safe_ext(lang)
+        sources.append((f"godbolt_{idx}.{ext}", src, lang))
 
     for i, (lang_tag, block) in enumerate(extract_code_blocks(body)):
-        ext = extension_for_lang(lang_tag)
-        name = f"inline_{i + 1}{ext}"
+        ext = _safe_ext(lang_tag)
+        name = f"inline_{i + 1}.{ext}"
         sources.append((name, block, lang_tag or ""))
 
     for i, (_full_url, filename) in enumerate(find_attachment_urls(body), 1):
-        if filename.lower().endswith((".ll", ".c", ".cpp", ".cxx")):
+        if filename.lower().endswith((".ll", ".c", ".cpp", ".cxx", ".s")):
             ext = Path(filename).suffix
             if len(ext) > 16:
                 continue

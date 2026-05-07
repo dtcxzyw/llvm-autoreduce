@@ -2,7 +2,6 @@
 
 from llvm_autoreduce.extract import (
     assemble_reproducers,
-    extension_for_lang,
     extract_code_blocks,
     find_attachment_urls,
     find_godbolt_links,
@@ -87,67 +86,52 @@ class TestCodeBlockExtraction:
         assert extract_code_blocks("plain text") == []
 
 
-class TestExtensionForLang:
-    def test_ir(self):
-        assert extension_for_lang("ir") == ".ll"
-
-    def test_llvm(self):
-        assert extension_for_lang("llvm") == ".ll"
-
-    def test_llvm_ir(self):
-        assert extension_for_lang("llvm_ir") == ".ll"
-
-    def test_cpp(self):
-        assert extension_for_lang("cpp") == ".cpp"
-
-    def test_c_plus_plus(self):
-        assert extension_for_lang("c++") == ".cpp"
-
-    def test_cxx(self):
-        assert extension_for_lang("cxx") == ".cpp"
-
-    def test_c(self):
-        assert extension_for_lang("c") == ".c"
-
-    def test_h(self):
-        assert extension_for_lang("h") == ".c"
-
-    def test_unknown_defaults_to_dot_ll(self):
-        assert extension_for_lang("rust") == ".ll"
-
-    def test_none_defaults_to_dot_ll(self):
-        assert extension_for_lang(None) == ".ll"
-
-    def test_case_insensitive(self):
-        assert extension_for_lang("LLVM") == ".ll"
-        assert extension_for_lang("CPP") == ".cpp"
-
-
 class TestAssembleReproducers:
-    def test_godbolt_sources(self, tmp_path):
+    def test_godbolt_single_source(self, tmp_path):
         body = ""
         godbolt = [("define void @f() { ret void }", "ir")]
         sources = assemble_reproducers(body, godbolt, tmp_path)
         assert len(sources) == 1
         name, content, lang = sources[0]
-        assert name == "godbolt.ll"
+        assert name == "godbolt_1.ir"
         assert lang == "ir"
         assert "define void @f()" in content
 
-    def test_inline_code_blocks(self, tmp_path):
+    def test_godbolt_multi_session_distinct_names(self, tmp_path):
+        # Two sessions with the same language — must not collide on filename.
+        godbolt = [
+            ("define i32 @a() { ret i32 0 }", "ir"),
+            ("define i32 @b() { ret i32 1 }", "ir"),
+        ]
+        sources = assemble_reproducers("", godbolt, tmp_path)
+        assert len(sources) == 2
+        names = {s[0] for s in sources}
+        assert names == {"godbolt_1.ir", "godbolt_2.ir"}
+
+    def test_godbolt_multi_session_mixed_langs(self, tmp_path):
+        godbolt = [
+            ("void a() {}", "cpp"),
+            ("define void @b() { ret void }", "ir"),
+        ]
+        sources = assemble_reproducers("", godbolt, tmp_path)
+        assert len(sources) == 2
+        names = {s[0] for s in sources}
+        assert names == {"godbolt_1.cpp", "godbolt_2.ir"}
+
+    def test_inline_code_blocks_uses_raw_tag(self, tmp_path):
         body = "```llvm\ndefine void @g() { ret void }\n```"
         sources = assemble_reproducers(body, [], tmp_path)
         assert len(sources) == 1
         name, content, lang = sources[0]
-        assert name == "inline_1.ll"
+        assert name == "inline_1.llvm"
         assert lang == "llvm"
 
-    def test_inline_no_tag(self, tmp_path):
+    def test_inline_no_tag_defaults_to_txt(self, tmp_path):
         body = "```\nint main(void) { return 0; }\n```"
         sources = assemble_reproducers(body, [], tmp_path)
         assert len(sources) == 1
         name, content, lang = sources[0]
-        assert name == "inline_1.ll"
+        assert name == "inline_1.txt"
         assert lang == ""
 
     def test_inline_c_tag(self, tmp_path):
@@ -156,6 +140,13 @@ class TestAssembleReproducers:
         assert len(sources) == 1
         name, content, lang = sources[0]
         assert name == "inline_1.c"
+
+    def test_inline_assembly_tag(self, tmp_path):
+        body = "```s\nmov eax, 1\n```"
+        sources = assemble_reproducers(body, [], tmp_path)
+        assert len(sources) == 1
+        name, content, lang = sources[0]
+        assert name == "inline_1.s"
 
     def test_attachment_skipped_if_missing(self, tmp_path):
         body = "![bug](https://githubusercontent.com/x/missing.ll)"
@@ -171,6 +162,14 @@ class TestAssembleReproducers:
         assert name == "attach_1.ll"
         assert "define i32 @main()" in content
 
+    def test_attachment_assembly_ext_accepted(self, tmp_path):
+        body = "![asm](https://githubusercontent.com/x/code.s)"
+        (tmp_path / "attach_1.s").write_text("mov eax, 1")
+        sources = assemble_reproducers(body, [], tmp_path)
+        assert len(sources) == 1
+        name, content, lang = sources[0]
+        assert name == "attach_1.s"
+
     def test_attachment_non_code_ext_skipped(self, tmp_path):
         body = "![img](https://githubusercontent.com/x/photo.png)"
         sources = assemble_reproducers(body, [], tmp_path)
@@ -183,6 +182,6 @@ class TestAssembleReproducers:
         sources = assemble_reproducers(body, godbolt, tmp_path)
         assert len(sources) == 3
         names = {s[0] for s in sources}
-        assert "godbolt.cpp" in names
+        assert "godbolt_1.cpp" in names
         assert "inline_1.c" in names
         assert "attach_1.ll" in names

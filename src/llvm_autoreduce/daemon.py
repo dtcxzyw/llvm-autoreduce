@@ -14,7 +14,7 @@ import signal
 import subprocess
 import sys
 import time
-from logging.handlers import RotatingFileHandler
+from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
 import requests
@@ -27,7 +27,9 @@ log = logging.getLogger("daemon")
 
 def setup_logging():
     config.WORK_ROOT.mkdir(parents=True, exist_ok=True)
-    handler = RotatingFileHandler(config.DAEMON_LOG, maxBytes=10_000_000, backupCount=3)
+    handler = TimedRotatingFileHandler(
+        config.DAEMON_LOG, when="midnight", interval=1, backupCount=10,
+    )
     handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
     root = logging.getLogger()
     root.setLevel(logging.INFO)
@@ -89,6 +91,26 @@ def _check_toolchain():
     return True
 
 
+def _cleanup_old_workdirs():
+    """Remove per-issue work directories older than 10 days."""
+    tasks_root = workdir.TASKS_DIR
+    if not tasks_root.exists():
+        return
+    cutoff = time.time() - 10 * 86400
+    removed = 0
+    for path in tasks_root.iterdir():
+        if not path.is_dir():
+            continue
+        try:
+            if path.stat().st_mtime < cutoff:
+                shutil.rmtree(path)
+                removed += 1
+        except OSError:
+            pass
+    if removed:
+        log.info("cleaned %d old workdirs", removed)
+
+
 # ACCEPTED RISK (F5): No file locking — concurrent daemon instances may
 # race on processed.txt, leading to duplicate processing or data loss.
 # ACCEPTED RISK (F10): processed.txt grows without bound — every
@@ -139,6 +161,15 @@ def _run_process(cmd, **kwargs):
     restores the parent limit immediately after fork(). This replaces preexec_fn
     (deprecated in Python 3.11+). The daemon is single-threaded so the brief
     parent-side limit change is harmless.
+
+    ACCEPTED RISK (R14): RLIMIT_AS is temporarily set on the parent process
+    between setrlimit() and fork(). If the daemon's RSS has grown above the 8 GB
+    hard limit (e.g. after processing a large Godbolt JSON response), a
+    subsequent allocation (logging, GC, signal handler) in this window may
+    SIGSEGV the daemon. The window is a handful of Python bytecode instructions
+    (setrlimit → Popen.__init__ → fork), and normal daemon memory usage stays
+    well below 8 GB, so the risk is low. Using subprocess.Popen(preexec_fn=…)
+    would avoid the parent-side side-effect but is deprecated in Python 3.11+.
     """
     timeout = kwargs.pop("timeout", None)
     old = resource.getrlimit(resource.RLIMIT_AS)
@@ -262,6 +293,12 @@ def verify_crash(result, workdir_path, crash_pattern):
     except OSError:
         log.exception("verify crash os error")
         return False
+    # ACCEPTED RISK (R15): p.stderr + p.stdout creates a combined string
+    # whose size is bounded only by the subprocess's RLIMIT_AS (8 GB).
+    # In practice LLVM tools on ≤ 8 KB inputs produce output well under 100 MB.
+    # A malicious or pathological input that fills the pipe could OOM the
+    # daemon, but such inputs are caught earlier by the 8 KB reproducer limit
+    # and the security review.
     return crash_pattern in (p.stderr + p.stdout)
 
 
@@ -435,6 +472,11 @@ def verify_extract_consistency(meta, result):
 
 # Godbolt API request with tenacity retry — same retry policy as the GitHub
 # API client to handle transient upstream failures and rate limits.
+# ACCEPTED RISK (F15): Godbolt shortlink JSON responses are limited to 100 KB
+# (envelope). Individual session sources > 8 KB are filtered downstream by
+# reprocess_issue / F12. A legitimate Godbolt link with multiple large
+# sessions may exceed this cap and be silently skipped.
+_GODBOLT_MAX_JSON = 102400
 @retry(
     stop=stop_after_attempt(5),
     wait=wait_exponential_jitter(initial=1, max=10),
@@ -446,6 +488,12 @@ def _fetch_godbolt_single(short_id):
         timeout=30,
     )
     resp.raise_for_status()
+    content = resp.content
+    if len(content) > _GODBOLT_MAX_JSON:
+        raise requests.HTTPError(
+            f"Godbolt response too large: {len(content)} bytes (max {_GODBOLT_MAX_JSON})",
+            response=resp,
+        )
     return resp.json()
 
 
@@ -602,6 +650,11 @@ def reprocess_issue(issue):
         workdir.cleanup(issue_id)
         return
 
+    # ACCEPTED RISK (R16): Logging the full review.json verdict includes the
+    # `reason` field, whose length is not validated by _validate_verdict. An
+    # excessively long reason (e.g. from an anomalous agent) may produce a
+    # multi-MB log line. The TimedRotatingFileHandler keeps 10 daily files,
+    # capping total disk usage.
     log.info("issue=%d review=%s", issue_id, json.dumps(verdict))
 
     try:
@@ -800,6 +853,7 @@ def main():
         try:
             log.info("round start")
             tools.update_all()
+            _cleanup_old_workdirs()
             issues = github.fetch_issues()
             log.info("round fetched %d issues", len(issues))
             for issue in issues:
@@ -807,6 +861,7 @@ def main():
                     reprocess_issue(issue)
                 except Exception:
                     log.exception("issue=%d unhandled error", issue.get("number", "?"))
+                    mark_processed(issue.get("number", "?"))
             log.info("round done")
         except tools.BuildError:
             log.exception("round failed: toolchain build error")

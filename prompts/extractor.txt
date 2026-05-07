@@ -2,13 +2,16 @@ Read `reproducers.md` for all reproducer files and `issue.md` for the bug report
 
 CRITICAL: Do not read or write any files outside the current working directory. All operations are confined to this directory. Never access /tmp, /home, /etc, /var, or any other system path.
 
+File names use raw language tags as extensions (e.g. `godbolt_1.ir`, `inline_1.c`, `inline_2.cpp`). Identify each file's actual type by inspecting its contents with `file` or by reading the first few lines. Do NOT rely on the filename extension.
+
 Your job:
-1. If any reproducer is C/C++ source (not LLVM IR), compile it to IR first: `clang -S -emit-llvm -Xclang -disable-O0-optnone repro.c -o repro.ll` and use the resulting .ll file as the primary reproducer.
-2. Attempt to reproduce the bug using the reproducer file and the pipeline mentioned in the issue. Capture the output — this validates that the reproducer is functional and provides an accurate crash signature.
-3. Classify the bug type: `crash` (opt/llc/lli crash), `miscompilation` (wrong code), or `unrelated`
-4. Identify the primary LLVM IR reproducer file name (MUST be a .ll file)
-5. Extract a literal substring from the crash output that uniquely identifies this crash (empty string for miscompilation). Do NOT use regex — produce a plain text fragment.
-6. Determine the opt pipeline from the issue
+1. Identify each reproducer's actual type (LLVM IR vs C vs C++ vs assembly). If the file is LLVM IR, its first non-empty line typically contains `; ModuleID`, `target triple`, `define`, `declare`, or `source_filename`.
+2. If any reproducer is C/C++ source, compile it to IR first: use `clang -x c -S -emit-llvm -Xclang -disable-O0-optnone <source> -o <output>.ll` (for C) or `clang -x c++ -S -emit-llvm -Xclang -disable-O0-optnone <source> -o <output>.ll` (for C++).
+3. Attempt to reproduce the bug using the reproducer file and the pipeline mentioned in the issue. Capture the output — this validates that the reproducer is functional and provides an accurate crash signature.
+4. Classify the bug type: `crash` (opt/llc/lli crash), `miscompilation` (wrong code), or `unrelated`
+5. Identify the primary LLVM IR reproducer file name (MUST be a .ll file)
+6. Extract a literal substring from the crash output that uniquely identifies this crash (empty string for miscompilation). Do NOT use regex — produce a plain text fragment.
+7. Determine the opt pipeline from the issue
 
 Write your findings to `extract.json` in this exact format:
 {{
