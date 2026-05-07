@@ -4,6 +4,7 @@ import logging
 import time
 
 import requests
+from tenacity import retry, stop_after_attempt, wait_exponential_jitter
 
 from .config import AUTOREDUCE_TOKEN, GITHUB_API, ISSUES_PER_ROUND, SOURCE_REPO, TARGET_REPO
 
@@ -14,8 +15,26 @@ HEADERS = {
     "Accept": "application/vnd.github.v3+json",
 }
 
+# ACCEPTED RISK (F8): HTTP-level retries add latency and may mask persistent
+# upstream issues. The daemon is single-threaded and the 30-minute polling
+# interval absorbs any additional delay. Exponential jitter with a 10s cap
+# prevents thundering-herd on the GitHub API during transient outages.
+RETRY_DECORATOR = retry(
+    stop=stop_after_attempt(5),
+    wait=wait_exponential_jitter(initial=1, max=10),
+    before=lambda retry_state: log.warning(
+        "%s %s attempt %d/%d — %s",
+        retry_state.fn.__name__,
+        retry_state.args[1] if len(retry_state.args) > 1 else "",
+        retry_state.attempt_number,
+        5,
+        retry_state.outcome.exception() if retry_state.outcome else "retrying",
+    ),
+)
+
 
 def _request(method, url, **kwargs):
+    kwargs.setdefault("timeout", 60)
     last_exc = None
     for attempt in range(3):
         resp = requests.request(method, url, headers=HEADERS, **kwargs)
@@ -42,6 +61,7 @@ def _request(method, url, **kwargs):
     raise last_exc
 
 
+@RETRY_DECORATOR
 def fetch_issues():
     # ACCEPTED RISK (F4): No pagination — only the first page of
     # ISSUES_PER_ROUND results is fetched. Issues beyond page 1 are
@@ -51,9 +71,13 @@ def fetch_issues():
     url = f"{GITHUB_API}/repos/{SOURCE_REPO}/issues"
     params = {"state": "open", "per_page": ISSUES_PER_ROUND, "sort": "updated", "direction": "desc"}
     resp = _request("GET", url, params=params)
-    return resp.json()
+    items = resp.json()
+    # Filter out pull requests — GitHub's /issues endpoint returns both
+    # issues and PRs. PRs have a "pull_request" key; real issues do not.
+    return [item for item in items if "pull_request" not in item]
 
 
+@RETRY_DECORATOR
 def get_issue_info(issue_number):
     url = f"{GITHUB_API}/repos/{SOURCE_REPO}/issues/{issue_number}"
     resp = _request("GET", url)
@@ -65,6 +89,7 @@ def get_issue_info(issue_number):
 # that exceed this size are almost certainly not yet reduced and would
 # time out reduction anyway. Larger attachments from issue bodies should
 # be reduced manually or via a future two-phase reduction pipeline.
+@RETRY_DECORATOR
 def download_attachment(url, dest_path, max_size=10240):
     resp = _request("GET", url, headers={"Authorization": f"Bearer {AUTOREDUCE_TOKEN}", "Accept": "application/octet-stream"})
     content = resp.content
@@ -74,6 +99,7 @@ def download_attachment(url, dest_path, max_size=10240):
         f.write(content)
 
 
+@RETRY_DECORATOR
 def create_issue(title, body):
     url = f"{GITHUB_API}/repos/{TARGET_REPO}/issues"
     for attempt in range(3):

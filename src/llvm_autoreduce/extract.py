@@ -5,7 +5,7 @@ import re
 
 log = logging.getLogger(__name__)
 
-GODBOLT_PATTERN = re.compile(r"https?://godbolt\.org/z/(\w+)")
+GODBOLT_PATTERN = re.compile(r"https?://godbolt\.org/z/([\w-]+)")
 # NOTE: This regex uses non-greedy matching and assumes well-formed markdown.
 # Known limitations: (a) code blocks containing literal ``` inside them will
 # be truncated, (b) trailing unclosed fence causes the block to be missed.
@@ -42,6 +42,10 @@ def guess_extension(lang):
     if lang in ("cpp", "c++", "cxx", "hpp", "h++"):
         return ".cpp"
     if lang in ("c", "h"):
+        # ACCEPTED RISK (F9): .h header files are assigned .c extension.
+        # Godbolt rarely reports language as "h" and misclassification of
+        # a header as C source is harmless — the reducer agent classifies
+        # content heuristically before reduction.
         return ".c"
     return ".ll"
 

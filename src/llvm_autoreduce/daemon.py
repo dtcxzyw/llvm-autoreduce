@@ -5,6 +5,7 @@ import atexit
 import json
 import logging
 import os
+import re
 import resource
 import shlex
 import shutil
@@ -56,6 +57,13 @@ def _remove_pidfile():
 def mark_processed(issue_id):
     # ACCEPTED RISK (F5): No file locking — concurrent daemon instances may
     # race on processed.json, leading to duplicate processing or data loss.
+    # ACCEPTED RISK (F10): processed.json grows without bound — every
+    # processed issue ID is stored permanently. For a long-running daemon
+    # this file accumulates entries linearly in time, and parsing the full
+    # JSON on every is_processed() call becomes increasingly expensive.
+    # The cost remains tolerable for months of operation on llvm/llvm-project
+    # since the daemon processes at most 20 issues per round with a 30-minute
+    # interval. Manual pruning is acceptable for now.
     processed = set()
     if config.PROCESSED.exists():
         try:
@@ -146,6 +154,12 @@ def _validate_result(result):
     """Reject result.json with missing required fields."""
     if "ir_file" not in result:
         raise ValueError("result.json missing required field: ir_file")
+    if result.get("type") == "crash":
+        crash_pattern = result.get("crash_pattern", "")
+        if not crash_pattern:
+            raise ValueError("result.json type=crash but crash_pattern is empty")
+        if len(crash_pattern) > 2000:
+            raise ValueError(f"result.json crash_pattern too long: {len(crash_pattern)} chars")
 
 
 def verify_crash(result, workdir_path):
@@ -212,6 +226,9 @@ def verify_llubi(result, workdir_path):
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
             preexec_fn=_set_limits,
         )
+        if test.returncode != 0:
+            log.error("llubi test crashed: signal=%d stderr=%s", -test.returncode if test.returncode < 0 else test.returncode, test.stderr[:200])
+            return False
         return ref.stdout != test.stdout
     except subprocess.TimeoutExpired:
         log.error("verify llubi timeout")
@@ -219,6 +236,19 @@ def verify_llubi(result, workdir_path):
     except OSError:
         log.exception("verify llubi os error")
         return False
+
+
+# ACCEPTED RISK (R8): verify_alive2 relies on Alive2's stable output
+# format to detect miscompilation. If upstream Alive2 changes the phrasing
+# of "0 incorrect transformations", "Transformation seems to be correct",
+# or the error patterns, the logic below must be updated. These strings
+# have been stable across multiple Alive2 releases and the coupling is
+# limited to this single function.
+_ALIVE2_INCORRECT_RE = re.compile(
+    r"[1-9]\d* incorrect transformations?|ERROR: Value mismatch"
+)
+
+_ALIVE2_APPROXIMATION_MARKER = "Alive2 approximated the semantics of the programs"
 
 
 def verify_alive2(result, workdir_path):
@@ -248,8 +278,35 @@ def verify_alive2(result, workdir_path):
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
             preexec_fn=_set_limits,
         )
+        # If alive-tv crashes (negative returncode), treat as inconclusive
+        # — not a confirmed miscompilation.
+        if p.returncode < 0:
+            log.error("alive2 crashed: signal=%d stderr=%s", -p.returncode, p.stderr[:200])
+            return False
         output = p.stderr + p.stdout
-        return "Transformation seems to be correct!" not in output
+        # Check for disk-full before pattern matching — disk exhaustion
+        # may produce truncated output that looks like a miscompilation.
+        if "No space left on device" in output or "Disk quota exceeded" in output:
+            return False
+        # Both phrases must be present for Alive2 to declare correctness.
+        correct = (
+            "0 incorrect transformations" in output
+            and "Transformation seems to be correct" in output
+        )
+        if correct:
+            return False
+        # Must match a specific incorrect-transformation or value-mismatch
+        # pattern to be a confirmed miscompilation.
+        if _ALIVE2_INCORRECT_RE.search(output):
+            # Reject Alive2 approximations — they are not confirmed bugs.
+            if _ALIVE2_APPROXIMATION_MARKER in output:
+                log.info("alive2 approximation detected, not a confirmed miscompilation")
+                return False
+            return True
+        # Inconclusive — Alive2 may have been killed by resource limits
+        # or produced unexpected output. Treat as not confirmed.
+        log.warning("alive2 inconclusive: no correctness message and no error pattern")
+        return False
     except subprocess.TimeoutExpired:
         log.error("verify alive2 timeout")
         return False
@@ -344,6 +401,15 @@ def reprocess_issue(issue):
         mark_processed(issue_id)
         return
 
+    # ACCEPTED RISK (F11): No label-based pre-filtering — the daemon
+    # processes every open issue regardless of labels (question,
+    # feature-request, documentation, etc.). Non-bug issues go through
+    # security review and extraction before being rejected by
+    # _validate_meta (bug_type not in VALID_BUG_TYPES). Label-based
+    # filtering is unreliable because GitHub label updates are
+    # asynchronous and may not reflect the latest classification at
+    # the time of issue fetch.
+
     wd = workdir.create(issue_id)
 
     issue_text = f"# Issue #{issue_id}: {title}\n\n{body}"
@@ -353,6 +419,18 @@ def reprocess_issue(issue):
     godbolt_sources = _fetch_godbolt(body)
     _download_attachments(body, wd)
     sources = extract.assemble_reproducers(body, godbolt_sources, wd)
+    # ACCEPTED RISK (F12): Reproducers exceeding 8 KB are skipped entirely.
+    # Large LLVM IR inputs are almost certainly not yet reduced and would
+    # timeout reduction or exhaust LLM context. Skipping them avoids
+    # wasting agent inference time on inputs that are too large to be
+    # usefully reduced in the current single-pass pipeline. Manual
+    # pre-reduction or a future two-phase pipeline can handle these later.
+    for _name, content, _lang in sources:
+        if len(content) > 8192:
+            log.info("issue=%d reproducer %s too large (%d bytes), skip", issue_id, _name, len(content))
+            mark_processed(issue_id)
+            workdir.cleanup(issue_id)
+            return
     reproducer_texts = []
     for name, content, _lang in sources:
         target = wd / name
@@ -416,7 +494,14 @@ def reprocess_issue(issue):
         workdir.cleanup(issue_id)
         return
 
-    # Step 3: extract reproducer metadata (bash allowed)
+    # Step 3: extract reproducer metadata (bash allowed).
+    # ACCEPTED RISK (R9): The extractor agent has bash access even though
+    # its primary task is classification and metadata extraction. This is
+    # intentional — the extractor is instructed to attempt reproducing the
+    # bug first to validate that the reproducer is functional and to
+    # capture an accurate crash pattern. Skipping this pre-validation
+    # would produce lower-quality extract.json and waste reducer agent
+    # time on non-reproducible inputs.
     extract_prompt = read_prompt("extractor.txt")
     ok = opencode.run(
         agent="extractor",

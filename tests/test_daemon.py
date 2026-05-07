@@ -85,3 +85,15 @@ class TestValidateResult:
     def test_missing_ir_file_raises(self):
         with pytest.raises(ValueError, match="ir_file"):
             _validate_result({"type": "crash"})
+
+    def test_crash_without_pattern_raises(self):
+        with pytest.raises(ValueError, match="crash_pattern is empty"):
+            _validate_result({"ir_file": "repro.ll", "type": "crash"})
+
+    def test_crash_with_empty_pattern_raises(self):
+        with pytest.raises(ValueError, match="crash_pattern is empty"):
+            _validate_result({"ir_file": "repro.ll", "type": "crash", "crash_pattern": ""})
+
+    def test_crash_pattern_too_long_raises(self):
+        with pytest.raises(ValueError, match="crash_pattern too long"):
+            _validate_result({"ir_file": "repro.ll", "type": "crash", "crash_pattern": "X" * 2001})
