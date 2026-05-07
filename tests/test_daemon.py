@@ -97,6 +97,30 @@ class TestValidateResult:
         with pytest.raises(ValueError, match="unknown oracle"):
             _validate_result({"ir_file": "repro.ll", "type": "miscompilation", "oracle": "bad_oracle"})
 
+    def test_reference_file_path_traversal(self):
+        with pytest.raises(ValueError, match="path separators"):
+            _validate_result({
+                "ir_file": "repro.ll",
+                "type": "miscompilation",
+                "oracle": "llubi",
+                "reference_file": "../../etc/passwd",
+            })
+
+    def test_reference_file_clean_ok(self):
+        _validate_result({
+            "ir_file": "repro.ll",
+            "type": "miscompilation",
+            "oracle": "alive2",
+            "reference_file": "repro.ll",
+        })
+
+    def test_reference_file_missing_ok(self):
+        _validate_result({
+            "ir_file": "repro.ll",
+            "type": "miscompilation",
+            "oracle": "llubi",
+        })
+
     def test_missing_ir_file_raises(self):
         with pytest.raises(ValueError, match="ir_file"):
             _validate_result({"type": "crash"})

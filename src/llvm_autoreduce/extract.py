@@ -2,6 +2,7 @@
 
 import logging
 import re
+from pathlib import Path
 
 log = logging.getLogger(__name__)
 
@@ -62,9 +63,12 @@ def assemble_reproducers(body, godbolt_sources, attachment_dir):
         name = f"inline_{i + 1}{guess_extension(lang)}"
         sources.append((name, block, lang))
 
-    for _full_url, filename in find_attachment_urls(body):
+    for i, (_full_url, filename) in enumerate(find_attachment_urls(body), 1):
         if filename.lower().endswith((".ll", ".c", ".cpp", ".cxx")):
-            safe_name = f"attach_{filename}"
+            ext = Path(filename).suffix
+            if len(ext) > 16:
+                continue
+            safe_name = f"attach_{i}{ext}"
             filepath = attachment_dir / safe_name
             if filepath.exists():
                 try:

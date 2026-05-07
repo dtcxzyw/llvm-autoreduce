@@ -2,11 +2,21 @@
 
 import logging
 import os
+import resource
 import subprocess
 
 from .config import PROJECT_ROOT
 
 log = logging.getLogger(__name__)
+
+
+def _set_limits():
+    """Set resource limits on child processes to prevent OOM."""
+    try:
+        limit = 8 * 1024 ** 3
+        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+    except (ValueError, OSError):
+        pass
 
 
 def _env():
@@ -56,6 +66,7 @@ def run(agent, workdir, prompt, timeout):
             stdout=f,
             stderr=subprocess.STDOUT,
             timeout=timeout,
+            preexec_fn=_set_limits,
         )
     log.info("opencode done agent=%s exit=%d", agent, proc.returncode)
     return proc.returncode == 0

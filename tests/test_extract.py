@@ -160,11 +160,11 @@ class TestAssembleReproducers:
 
     def test_attachment_read(self, tmp_path):
         body = "![file](https://githubusercontent.com/x/test.ll)"
-        (tmp_path / "attach_test.ll").write_text("define i32 @main() { ret i32 0 }")
+        (tmp_path / "attach_1.ll").write_text("define i32 @main() { ret i32 0 }")
         sources = assemble_reproducers(body, [], tmp_path)
         assert len(sources) == 1
         name, content, lang = sources[0]
-        assert name == "attach_test.ll"
+        assert name == "attach_1.ll"
         assert lang == "ir"
         assert "define i32 @main()" in content
 
@@ -175,11 +175,11 @@ class TestAssembleReproducers:
 
     def test_mixed_sources(self, tmp_path):
         body = "```c\nint x;\n```\n![f](https://githubusercontent.com/x/file.ll)"
-        (tmp_path / "attach_file.ll").write_text("define void @h() { ret void }")
+        (tmp_path / "attach_1.ll").write_text("define void @h() { ret void }")
         godbolt = [("void f() {}", "cpp")]
         sources = assemble_reproducers(body, godbolt, tmp_path)
         assert len(sources) == 3
         names = {s[0] for s in sources}
         assert "godbolt.cpp" in names
         assert "inline_1.c" in names
-        assert "attach_file.ll" in names
+        assert "attach_1.ll" in names

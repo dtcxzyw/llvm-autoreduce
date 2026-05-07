@@ -60,37 +60,35 @@ checkout_and_build_llubi() {
 rollback_llvm() {
     echo "ROLLBACK: restoring known-good LLVM"
     local hash
-    hash=$(python3 -c "import json; print(json.load(open('$KNOWN_GOOD_FILE'))['llvm'])")
+    hash=$(jq -r '.llvm' "$KNOWN_GOOD_FILE")
     checkout_and_build_llvm "$hash" || { echo "FATAL: llvm rollback build failed"; exit 1; }
 }
 
 rollback_alive2() {
     echo "ROLLBACK: restoring known-good alive2"
     local hash
-    hash=$(python3 -c "import json; print(json.load(open('$KNOWN_GOOD_FILE'))['alive2'])")
+    hash=$(jq -r '.alive2' "$KNOWN_GOOD_FILE")
     checkout_and_build_alive2 "$hash" || echo "WARN: alive2 rollback build failed"
 }
 
 rollback_llubi() {
     echo "ROLLBACK: restoring known-good llubi"
     local hash
-    hash=$(python3 -c "import json; print(json.load(open('$KNOWN_GOOD_FILE'))['llubi'])")
+    hash=$(jq -r '.llubi' "$KNOWN_GOOD_FILE")
     checkout_and_build_llubi "$hash" || echo "WARN: llubi rollback build failed"
 }
 
 update_known_hash() {
     local component="$1" hash="$2"
-    python3 -c "
-import json, os
-path = '${KNOWN_GOOD_FILE}'
-data = {}
-if os.path.exists(path):
-    with open(path) as f:
-        data = json.load(f)
-data['${component}'] = '${hash}'
-with open(path, 'w') as f:
-    json.dump(data, f, indent=2)
-"
+    if [ -f "$KNOWN_GOOD_FILE" ]; then
+        jq --arg comp "$component" --arg hash "$hash" \
+            '.[$comp] = $hash' "$KNOWN_GOOD_FILE" > "$KNOWN_GOOD_FILE.tmp" \
+            && mv "$KNOWN_GOOD_FILE.tmp" "$KNOWN_GOOD_FILE"
+    else
+        echo "{\"$component\": \"$hash\"}" | \
+            jq --arg comp "$component" --arg hash "$hash" \
+                '.[$comp] = $hash' > "$KNOWN_GOOD_FILE"
+    fi
 }
 
 build_all() {

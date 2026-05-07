@@ -15,7 +15,7 @@ ALIVE2_BIN = Path(os.environ.get("ALIVE2_PATH", ALIVE2_TRUNK / "build" / "bin" /
 LLUBI_BIN = Path(os.environ.get("LLUBI_PATH", LLUBI_TRUNK / "build" / "bin" / "llubi_legacy"))
 
 KNOWN_GOOD = WORK_ROOT / ".known-good"
-PROCESSED = WORK_ROOT / "processed.json"
+PROCESSED = WORK_ROOT / "processed.txt"
 DAEMON_LOG = WORK_ROOT / "daemon.log"
 
 AUTOREDUCE_TOKEN = os.environ.get("AUTOREDUCE_TOKEN", "")

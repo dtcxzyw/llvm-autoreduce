@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 import requests
 from tenacity import retry, stop_after_attempt, wait_exponential_jitter
@@ -87,42 +88,32 @@ def _check_toolchain():
     return True
 
 
+# ACCEPTED RISK (F5): No file locking — concurrent daemon instances may
+# race on processed.txt, leading to duplicate processing or data loss.
+# ACCEPTED RISK (F10): processed.txt grows without bound — every
+# processed issue ID is stored permanently. For a long-running daemon
+# this file accumulates entries linearly in time. Manual pruning is
+# acceptable for now.
 def mark_processed(issue_id):
-    # ACCEPTED RISK (F5): No file locking — concurrent daemon instances may
-    # race on processed.json, leading to duplicate processing or data loss.
-    # ACCEPTED RISK (F10): processed.json grows without bound — every
-    # processed issue ID is stored permanently. For a long-running daemon
-    # this file accumulates entries linearly in time, and parsing the full
-    # JSON on every is_processed() call becomes increasingly expensive.
-    # The cost remains tolerable for months of operation on llvm/llvm-project
-    # since the daemon processes at most 20 issues per round with a 30-minute
-    # interval. Manual pruning is acceptable for now.
-    processed = set()
-    if config.PROCESSED.exists():
-        try:
-            processed = set(json.loads(config.PROCESSED.read_text()))
-        except (json.JSONDecodeError, OSError):
-            # Don't silently reset — back up the corrupt file for manual
-            # recovery and start fresh. Without this backup, a corrupt
-            # processed.json causes all previously-processed issues to be
-            # re-processed with no audit trail.
-            backup = config.PROCESSED.with_suffix(f".json.bak.{int(time.time())}")
-            shutil.copy2(config.PROCESSED, backup)
-            log.critical("processed.json corrupt — backed up to %s, starting new", backup)
-    processed.add(str(issue_id))
-    tmp = config.PROCESSED.with_suffix(".tmp")
-    tmp.write_text(json.dumps(sorted(processed)))
-    tmp.replace(config.PROCESSED)
+    # One-ID-per-line format: each line is an issue number. Corrupt lines
+    # are silently skipped. This avoids the all-or-nothing failure mode
+    # of a JSON array — a single bad line never loses the rest of the file.
+    with open(config.PROCESSED, "a") as f:
+        f.write(f"{issue_id}\n")
 
 
 def is_processed(issue_id):
     if not config.PROCESSED.exists():
         return False
+    target = str(issue_id)
     try:
-        return str(issue_id) in json.loads(config.PROCESSED.read_text())
-    except (json.JSONDecodeError, OSError):
-        log.warning("processed.json corrupt during read, treating as empty")
+        for line in config.PROCESSED.read_text().splitlines():
+            if line.strip() == target:
+                return True
+    except OSError:
+        log.warning("failed to read %s, treating as empty", config.PROCESSED)
         return False
+    return False
 
 
 def read_prompt(name):
@@ -214,6 +205,11 @@ def _validate_result(result):
         oracle = result.get("oracle", "")
         if oracle not in ("llubi", "alive2"):
             raise ValueError(f"result.json miscompilation type with unknown oracle: {oracle!r}")
+        reference = result.get("reference_file", "")
+        if reference and ("/" in reference or "\\" in reference):
+            raise ValueError(
+                f"result.json reference_file contains path separators: {reference!r}"
+            )
     else:
         raise ValueError(f"result.json has unknown type: {result_type!r}")
 
@@ -458,11 +454,16 @@ def _fetch_godbolt(body):
 
 
 def _download_attachments(body, wd):
+    attach_idx = 0
     for url, filename in extract.find_attachment_urls(body):
         if not filename.lower().endswith((".ll", ".c", ".cpp", ".cxx")):
             continue
-        # Prefix to avoid collisions with pipeline output files (result.json, etc.).
-        safe_name = f"attach_{filename}"
+        attach_idx += 1
+        ext = Path(filename).suffix
+        if len(ext) > 16:
+            log.warning("attachment extension too long: %r, skipping", ext)
+            continue
+        safe_name = f"attach_{attach_idx}{ext}"
         try:
             github.download_attachment(url, str(wd / safe_name))
             log.info("attachment downloaded: %s", safe_name)
@@ -700,6 +701,14 @@ def reprocess_issue(issue):
         mark_processed(issue_id)
         workdir.cleanup(issue_id)
         return
+    # ACCEPTED RISK (F13): No retry on verify failures — if the verification
+    # subprocess times out or the toolchain signals a non-reproducible result,
+    # the issue is immediately marked processed and never retried. Transient
+    # infra issues (system load, temporary toolchain glitch) permanently lose
+    # the issue. Accepted because verify failures are biased toward genuine
+    # non-reproducibility rather than transient errors, and the risk of
+    # spurious passes (accepting a bad reduction) outweighs the cost of
+    # occasionally discarding a valid one.
     if not verify(result, wd, meta):
         log.warning("issue=%d verify failed", issue_id)
         mark_processed(issue_id)
@@ -781,7 +790,11 @@ def main():
             log.exception("round failed")
         if _shutdown_requested:
             break
-        time.sleep(config.DAEMON_INTERVAL)
+        # Sleep in 1-second increments so that SIGTERM/SIGINT are checked
+        # promptly, rather than blocking for the full DAEMON_INTERVAL.
+        deadline = time.time() + config.DAEMON_INTERVAL
+        while time.time() < deadline and not _shutdown_requested:
+            time.sleep(1)
 
     log.info("daemon shutting down")
 
