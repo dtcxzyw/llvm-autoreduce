@@ -3,11 +3,12 @@ Read `reproducers.md` for all reproducer files and `issue.md` for the bug report
 CRITICAL: Do not read or write any files outside the current working directory. All operations are confined to this directory. Never access /tmp, /home, /etc, /var, or any other system path.
 
 Your job:
-1. Attempt to reproduce the bug using the reproducer file and the pipeline mentioned in the issue. Capture the output — this validates that the reproducer is functional and provides an accurate crash signature.
-2. Classify the bug type: `crash` (opt/llc/lli crash), `miscompilation` (wrong code), or `unrelated`
-3. Identify the primary reproducer file name
-4. Extract a literal substring from the crash output that uniquely identifies this crash (empty string for miscompilation). Do NOT use regex — produce a plain text fragment.
-5. Determine the opt pipeline from the issue
+1. If any reproducer is C/C++ source (not LLVM IR), compile it to IR first: `clang -S -emit-llvm -Xclang -disable-O0-optnone repro.c -o repro.ll` and use the resulting .ll file as the primary reproducer.
+2. Attempt to reproduce the bug using the reproducer file and the pipeline mentioned in the issue. Capture the output — this validates that the reproducer is functional and provides an accurate crash signature.
+3. Classify the bug type: `crash` (opt/llc/lli crash), `miscompilation` (wrong code), or `unrelated`
+4. Identify the primary LLVM IR reproducer file name (MUST be a .ll file)
+5. Extract a literal substring from the crash output that uniquely identifies this crash (empty string for miscompilation). Do NOT use regex — produce a plain text fragment.
+6. Determine the opt pipeline from the issue
 
 Write your findings to `extract.json` in this exact format:
 {{

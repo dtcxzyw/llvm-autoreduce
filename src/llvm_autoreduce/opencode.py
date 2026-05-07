@@ -18,8 +18,11 @@ def _env():
     # intentionally omitted. The broad LANG/LC_ALL pair covers all common
     # locale needs. Adding more would expand the attack surface with
     # negligible benefit.
+    # NOTE: HOME is intentionally excluded. Agents with bash access can
+    # still discover it via ~ or getent, but we should not hand it to
+    # them as an env-var convenience.
     env = {}
-    for key in ("HOME", "USER", "PATH", "TERM", "SHELL", "LANG", "LC_ALL"):
+    for key in ("USER", "PATH", "TERM", "SHELL", "LANG", "LC_ALL"):
         if key in os.environ:
             env[key] = os.environ[key]
     for key, val in os.environ.items():

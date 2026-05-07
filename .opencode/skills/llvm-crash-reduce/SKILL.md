@@ -63,8 +63,7 @@ Run the pass on `reduced.ll`, confirm crash signature still matches.
   "type": "crash",
   "tool": "opt",
   "args": "-passes=licm",
-  "ir_file": "reduced.ll",
-  "crash_pattern": "failed at LICM.cpp"
+  "ir_file": "reduced.ll"
 }
 ```
 

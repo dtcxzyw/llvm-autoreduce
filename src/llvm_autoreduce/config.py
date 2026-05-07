@@ -32,3 +32,18 @@ VERIFY_TIMEOUT = 120
 DAEMON_INTERVAL = 1800
 
 ISSUES_PER_ROUND = 20
+
+# Issues carrying any of these labels are skipped — they are known non-bug
+# categories. The daemon only excludes based on label presence, never on
+# label absence (unlabeled issues are still processed).
+SKIP_LABELS = frozenset(
+    {
+        "question",
+        "feature request",
+        "feature-request",
+        "documentation",
+        "duplicate",
+        "invalid",
+        "wontfix",
+    }
+)

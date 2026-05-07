@@ -16,6 +16,7 @@ import time
 from logging.handlers import RotatingFileHandler
 
 import requests
+from tenacity import retry, stop_after_attempt, wait_exponential_jitter
 
 from . import config, extract, github, opencode, tools, workdir
 
@@ -54,6 +55,27 @@ def _remove_pidfile():
         pidfile.unlink()
 
 
+def _check_toolchain():
+    """Verify critical toolchain binaries exist and are executable.
+
+    Called after a BuildError in the main loop to detect whether the
+    toolchain was left in a corrupt state that would cause all subsequent
+    reduction rounds to fail silently.
+    """
+    missing = []
+    for name in ("opt", "llc", "lli", "llvm-reduce", "clang"):
+        path = config.LLVM_BIN / name
+        if not path.is_file():
+            missing.append(f"{name} (missing)")
+        elif not os.access(path, os.X_OK):
+            missing.append(f"{name} (not executable)")
+    if missing:
+        log.critical("toolchain health check FAILED: %s", ", ".join(missing))
+        return False
+    log.info("toolchain health check passed")
+    return True
+
+
 def mark_processed(issue_id):
     # ACCEPTED RISK (F5): No file locking — concurrent daemon instances may
     # race on processed.json, leading to duplicate processing or data loss.
@@ -69,7 +91,13 @@ def mark_processed(issue_id):
         try:
             processed = set(json.loads(config.PROCESSED.read_text()))
         except (json.JSONDecodeError, OSError):
-            log.warning("processed.json corrupt, resetting")
+            # Don't silently reset — back up the corrupt file for manual
+            # recovery and start fresh. Without this backup, a corrupt
+            # processed.json causes all previously-processed issues to be
+            # re-processed with no audit trail.
+            backup = config.PROCESSED.with_suffix(f".json.bak.{int(time.time())}")
+            shutil.copy2(config.PROCESSED, backup)
+            log.critical("processed.json corrupt — backed up to %s, starting new", backup)
     processed.add(str(issue_id))
     tmp = config.PROCESSED.with_suffix(".tmp")
     tmp.write_text(json.dumps(sorted(processed)))
@@ -151,26 +179,35 @@ def _safe_relative(workdir_path, filename):
 
 
 def _validate_result(result):
-    """Reject result.json with missing required fields."""
+    """Reject result.json with missing required fields.
+
+    crash_pattern is intentionally NOT validated here — it originates
+    exclusively from extract.json (the extractor agent). The reducer agent
+    produces result.json without a crash_pattern field; the daemon pairs
+    extract.json's crash_pattern with result.json's ir_file/tool/args at
+    verification time.
+    """
     if "ir_file" not in result:
         raise ValueError("result.json missing required field: ir_file")
-    if result.get("type") == "crash":
-        crash_pattern = result.get("crash_pattern", "")
-        if not crash_pattern:
-            raise ValueError("result.json type=crash but crash_pattern is empty")
-        if len(crash_pattern) > 2000:
-            raise ValueError(f"result.json crash_pattern too long: {len(crash_pattern)} chars")
 
 
-def verify_crash(result, workdir_path):
-    tool = result.get("tool", "opt")
+def verify_crash(result, workdir_path, crash_pattern):
+    # Resolve the tool binary from the built LLVM toolchain (never PATH).
+    # The reducer agent sets up PATH via opencode._env() to include
+    # work/llvm-trunk/build/bin, but the daemon's own verify step must
+    # explicitly use the same built binaries to avoid version mismatch.
+    tool_name = result.get("tool", "opt")
+    if tool_name not in ("opt", "llc", "lli"):
+        log.error("verify crash: unknown tool %s", tool_name)
+        return False
+    tool_path = str(config.LLVM_BIN / tool_name)
     safe_ir = _safe_relative(workdir_path, result["ir_file"])
     # ACCEPTED RISK (R5): result.json args comes from the reducer agent
     # (which has bash access). List-based subprocess.run prevents shell
     # injection but does not prevent argument injection into LLVM tools
     # (e.g. -o /dev/null). This is acceptable because the reducer agent
     # already has unrestricted bash access within the workdir.
-    cmd = [tool] + shlex.split(result.get("args", "")) + [safe_ir]
+    cmd = [tool_path] + shlex.split(result.get("args", "")) + [safe_ir]
     try:
         p = subprocess.run(
             cmd, capture_output=True, text=True,
@@ -183,8 +220,7 @@ def verify_crash(result, workdir_path):
     except OSError:
         log.exception("verify crash os error")
         return False
-    needle = result.get("crash_pattern", "")
-    return needle in (p.stderr + p.stdout)
+    return crash_pattern in (p.stderr + p.stdout)
 
 
 # ACCEPTED RISK (R6): verify_llubi compares exact stdout strings
@@ -197,6 +233,8 @@ def verify_llubi(result, workdir_path):
     # into llubi_legacy. The reducer agent already has unrestricted bash
     # access within the workdir.
     llubi_args = result.get("llubi_args", "--max-steps 1000000")
+    # Use the built LLVM toolchain opt binary, never PATH.
+    opt_path = str(config.LLVM_BIN / "opt")
     try:
         ref = subprocess.run(
             [str(config.LLUBI_BIN)] + shlex.split(llubi_args) + [safe_ir],
@@ -209,7 +247,7 @@ def verify_llubi(result, workdir_path):
             return False
 
         opt_out = subprocess.run(
-            ["opt"] + shlex.split(args) + [safe_ir, "-S"],
+            [opt_path] + shlex.split(args) + [safe_ir, "-S"],
             capture_output=True, text=True,
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
             preexec_fn=_set_limits,
@@ -258,9 +296,11 @@ def verify_alive2(result, workdir_path):
     # into alive-tv. The reducer agent already has unrestricted bash
     # access within the workdir.
     alive2_args = result.get("alive2_args", "--smt-to=10000")
+    # Use the built LLVM toolchain opt binary, never PATH.
+    opt_path = str(config.LLVM_BIN / "opt")
     try:
         opt_out = subprocess.run(
-            ["opt"] + shlex.split(args) + [safe_ir, "-S"],
+            [opt_path] + shlex.split(args) + [safe_ir, "-S"],
             capture_output=True, text=True,
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
             preexec_fn=_set_limits,
@@ -315,9 +355,18 @@ def verify_alive2(result, workdir_path):
         return False
 
 
-def verify(result, workdir_path):
+# The daemon trusts the oracle choice made by the reducer agent inside
+# result.json. It does not independently select or fallback between
+# llubi_legacy and alive-tv — the reducer agent has full context about
+# which oracle succeeded during its opt-bisect-limit binary search.
+def verify(result, workdir_path, meta):
     if result.get("type") == "crash":
-        return verify_crash(result, workdir_path)
+        # crash_pattern originates exclusively from extract.json.
+        crash_pattern = meta.get("crash_pattern", "")
+        if not crash_pattern:
+            log.error("crash verification requires crash_pattern from extract.json")
+            return False
+        return verify_crash(result, workdir_path, crash_pattern)
     if result.get("oracle") == "llubi":
         return verify_llubi(result, workdir_path)
     if result.get("oracle") == "alive2":
@@ -326,7 +375,11 @@ def verify(result, workdir_path):
 
 
 def verify_extract_consistency(meta, result):
-    """Cross-check extract.json metadata against reduce result.json."""
+    """Cross-check extract.json metadata against reduce result.json.
+
+    crash_pattern is validated against meta only — result.json no longer
+    carries crash_pattern (it originates exclusively from extract.json).
+    """
     bug_type = meta.get("bug_type", "")
     result_type = result.get("type", "")
     if bug_type and result_type and bug_type != result_type:
@@ -340,15 +393,23 @@ def verify_extract_consistency(meta, result):
     if bug_type == "miscompilation" and crash_pattern:
         log.warning("extract bug_type=miscompilation but crash_pattern is non-empty, ignoring crash_pattern")
 
-    if result_type == "crash":
-        result_pattern = result.get("crash_pattern", "")
-        if crash_pattern and result_pattern and crash_pattern != result_pattern:
-            log.warning(
-                "crash_pattern mismatch: extract=%s result=%s",
-                crash_pattern, result_pattern,
-            )
-            # non-fatal: reducer may have refined the pattern, just warn
     return True
+
+
+# Godbolt API request with tenacity retry — same retry policy as the GitHub
+# API client to handle transient upstream failures and rate limits.
+@retry(
+    stop=stop_after_attempt(5),
+    wait=wait_exponential_jitter(initial=1, max=10),
+    reraise=True,
+)
+def _fetch_godbolt_single(short_id):
+    resp = requests.get(
+        f"https://godbolt.org/api/shortlink/{short_id}",
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()
 
 
 def _fetch_godbolt(body):
@@ -358,12 +419,7 @@ def _fetch_godbolt(body):
     sources = []
     for short_id in links:
         try:
-            resp = requests.get(
-                f"https://godbolt.org/api/shortlink/{short_id}",
-                timeout=30,
-            )
-            resp.raise_for_status()
-            data = resp.json()
+            data = _fetch_godbolt_single(short_id)
             for session in data.get("sessions", []):
                 lang = session.get("language", "ir")
                 src = session.get("source", "")
@@ -390,6 +446,16 @@ def _download_attachments(body, wd):
 def reprocess_issue(issue):
     issue_id = issue["number"]
     if is_processed(issue_id):
+        return
+
+    # Label-based exclusion: skip issues tagged with known non-bug labels
+    # (question, feature request, documentation, etc.). Unlabeled issues
+    # are still processed — the daemon never excludes based on label absence.
+    issue_labels = {lbl["name"].lower() for lbl in issue.get("labels", [])}
+    if issue_labels & config.SKIP_LABELS:
+        matched = issue_labels & config.SKIP_LABELS
+        log.info("issue=%d skipped: label match %s", issue_id, matched)
+        mark_processed(issue_id)
         return
 
     log.info("issue=%d processing", issue_id)
@@ -602,7 +668,7 @@ def reprocess_issue(issue):
         mark_processed(issue_id)
         workdir.cleanup(issue_id)
         return
-    if not verify(result, wd):
+    if not verify(result, wd, meta):
         log.warning("issue=%d verify failed", issue_id)
         mark_processed(issue_id)
         workdir.cleanup(issue_id)
@@ -665,6 +731,9 @@ def main():
                 except Exception:
                     log.exception("issue=%d unhandled error", issue.get("number", "?"))
             log.info("round done")
+        except tools.BuildError:
+            log.exception("round failed: toolchain build error")
+            _check_toolchain()
         except Exception:
             log.exception("round failed")
         if _shutdown_requested:
