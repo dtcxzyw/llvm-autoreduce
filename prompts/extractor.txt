@@ -2,7 +2,7 @@ Read `reproducers.md` for all reproducer files and `issue.md` for the bug report
 
 CRITICAL: Do not read or write any files outside the current working directory. All operations are confined to this directory. Never access /tmp, /home, /etc, /var, or any other system path.
 
-File names use raw language tags as extensions (e.g. `godbolt_1.ir`, `inline_1.c`, `inline_2.cpp`). Identify each file's actual type by inspecting its contents with `file` or by reading the first few lines. Do NOT rely on the filename extension.
+File names use raw language tags as extensions (e.g. `godbolt_1.ir`, `inline_1.c`, `inline_2.cpp`). Identify each file's actual type by reading its first 5-10 non-empty lines. LLVM IR files start with `; ModuleID`, `target triple`, `define`, `declare`, or `source_filename`. C/C++ files contain `#include`, function signatures, etc. Do NOT use the `file` command — it cannot distinguish C from C++. Do NOT rely on the filename extension.
 
 Your job:
 1. Identify each reproducer's actual type (LLVM IR vs C vs C++ vs assembly). If the file is LLVM IR, its first non-empty line typically contains `; ModuleID`, `target triple`, `define`, `declare`, or `source_filename`.

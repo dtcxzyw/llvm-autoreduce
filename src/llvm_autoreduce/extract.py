@@ -30,9 +30,9 @@ def extract_code_blocks(body):
 # ACCEPTED RISK (F14): File type identification is delegated to the extractor
 # agent. Filenames use raw language tags from the source (godbolt session
 # language field, markdown fence tag, or attachment filename) without a
-# centralized extension-mapping table. The extractor agent must inspect file
-# content (via `file` or by reading the first few lines) and use `clang -x` to
-# set the language dialect when compiling C/C++ sources. This avoids silent
+# centralized extension-mapping table. The extractor agent must read file
+# contents (first 5-10 lines) to determine the actual type and use `clang -x`
+# to set the language dialect when compiling C/C++ sources. This avoids silent
 # miscategorisation (e.g. assembly files masquerading as .ll) and eliminates
 # the mapping-table maintenance burden.
 def _safe_ext(raw_tag):
