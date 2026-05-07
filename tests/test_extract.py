@@ -51,6 +51,31 @@ class TestAttachmentUrls:
         assert result[0][1] == "bug.ll"
         assert result[1][1] == "test.c"
 
+    def test_github_assets_url(self):
+        body = "![repro.ll](https://github.com/user-attachments/assets/abc123)"
+        result = find_attachment_urls(body)
+        assert len(result) == 1
+        assert result[0] == (
+            "https://github.com/user-attachments/assets/abc123",
+            "repro.ll",
+        )
+
+    def test_github_assets_url_alt_text_path(self):
+        body = "![path/to/bug.cpp](https://github.com/user-attachments/assets/def456)"
+        result = find_attachment_urls(body)
+        assert len(result) == 1
+        assert result[0][1] == "bug.cpp"
+
+    def test_github_assets_mixed_with_old(self):
+        body = (
+            "![a](https://githubusercontent.com/1/file.ll)\n"
+            "![bug.c](https://github.com/user-attachments/assets/xyz789)"
+        )
+        result = find_attachment_urls(body)
+        assert len(result) == 2
+        names = {r[1] for r in result}
+        assert names == {"file.ll", "bug.c"}
+
 
 class TestCodeBlockExtraction:
     def test_llvm_block(self):

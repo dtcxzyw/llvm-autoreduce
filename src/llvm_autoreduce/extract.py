@@ -13,6 +13,12 @@ GODBOLT_PATTERN = re.compile(r"https?://(?:www\.)?godbolt\.org/z/([\w-]+)")
 # These are rare in LLVM bug reports and a full markdown parser is overkill.
 CODE_BLOCK_PATTERN = re.compile(r"```(\w+)?\s*\n(.*?)```", re.DOTALL)
 ATTACHMENT_PATTERN = re.compile(r"!\[.*?\]\((https://githubusercontent\.com/[^)]+/([^/)]+))")
+# GitHub issue attachments uploaded via drag-and-drop use
+# github.com/user-attachments/assets/<uuid> URLs. The filename is in
+# the markdown alt text, not the URL path.
+_GH_ASSETS_PATTERN = re.compile(
+    r"!\[([^\]]*)\]\((https://github\.com/user-attachments/assets/[^)]+)\)"
+)
 
 
 def find_godbolt_links(body):
@@ -20,7 +26,14 @@ def find_godbolt_links(body):
 
 
 def find_attachment_urls(body):
-    return [(m.group(1), m.group(2)) for m in ATTACHMENT_PATTERN.finditer(body)]
+    results = []
+    for m in ATTACHMENT_PATTERN.finditer(body):
+        results.append((m.group(1), m.group(2)))
+    for m in _GH_ASSETS_PATTERN.finditer(body):
+        url = m.group(2)
+        filename = Path(m.group(1).strip()).name or m.group(1).strip()
+        results.append((url, filename))
+    return results
 
 
 def extract_code_blocks(body):

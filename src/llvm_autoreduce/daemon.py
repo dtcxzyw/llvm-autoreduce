@@ -765,12 +765,17 @@ def reprocess_issue(issue):
     #        the reducer. Multi-file reproducer scenarios (e.g. inter-module
     #        bugs requiring multiple .ll files) are not supported and will
     #        silently fail reduction.
-    reduce_prompt = read_prompt("reducer.txt").format(
-        issue_file="issue.md",
-        verdict_type=meta["bug_type"],
-        reproducer_file=meta.get("reproducer_file", "repro.ll"),
-        crash_pattern=meta.get("crash_pattern", ""),
-        pipeline=meta.get("pipeline", "-passes='default<O2>'"),
+    reduce_prompt = read_prompt("reducer.txt")
+    reduce_prompt = reduce_prompt.replace("{issue_file}", "issue.md")
+    reduce_prompt = reduce_prompt.replace("{verdict_type}", meta["bug_type"])
+    reduce_prompt = reduce_prompt.replace(
+        "{reproducer_file}", meta.get("reproducer_file", "repro.ll")
+    )
+    reduce_prompt = reduce_prompt.replace(
+        "{crash_pattern}", meta.get("crash_pattern", "")
+    )
+    reduce_prompt = reduce_prompt.replace(
+        "{pipeline}", meta.get("pipeline", "-passes='default<O2>'")
     )
     ok = opencode.run(
         agent="reducer",
@@ -844,15 +849,13 @@ def reprocess_issue(issue):
         return
     report = workdir.read(report_path)
     report_title = f"[Reduced] {meta['bug_type']} — #{issue_id}"
-    # Mark processed before submission — the reduced result is cached
-    # locally in the workdir. If submission fails persistently the
-    # daemon will not re-process this issue on subsequent rounds.
-    mark_processed(issue_id)
     try:
         url = github.create_issue(report_title, report)
         log.info("issue=%d submitted %s", issue_id, url)
     except Exception:
-        log.exception("issue=%d submission failed (result cached locally)", issue_id)
+        log.exception("issue=%d submission failed (will retry next round)", issue_id)
+        return
+    mark_processed(issue_id)
     workdir.cleanup(issue_id)
 
 

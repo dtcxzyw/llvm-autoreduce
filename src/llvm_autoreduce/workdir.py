@@ -20,7 +20,11 @@ def create(issue_id):
 
 
 def read(filepath):
-    return Path(filepath).read_text()
+    try:
+        return Path(filepath).read_text()
+    except UnicodeDecodeError:
+        log.warning("encoding error in %s, using replacement characters", filepath)
+        return Path(filepath).read_text(errors="replace")
 
 
 def read_json(filepath):
