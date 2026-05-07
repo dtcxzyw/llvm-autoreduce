@@ -1,5 +1,6 @@
 """opencode CLI subprocess wrapper."""
 
+import contextlib
 import logging
 import os
 import resource
@@ -8,15 +9,6 @@ import subprocess
 from .config import PROJECT_ROOT
 
 log = logging.getLogger(__name__)
-
-
-def _set_limits():
-    """Set resource limits on child processes to prevent OOM."""
-    try:
-        limit = 8 * 1024 ** 3
-        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
-    except (ValueError, OSError):
-        pass
 
 
 def _env():
@@ -57,16 +49,34 @@ def run(agent, workdir, prompt, timeout):
         "-p", prompt,
     ]
 
+    # Pre-set RLIMIT_AS=8GB before fork so child inherits it; restore parent
+    # limit immediately after. Replaces preexec_fn (deprecated in 3.11+).
+    old = resource.getrlimit(resource.RLIMIT_AS)
+    limit = 8 * 1024 ** 3
+    try:
+        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+    except (ValueError, OSError):
+        old = None
+
     log.info("opencode start agent=%s workdir=%s", agent, workdir)
-    with open(log_path, "w") as f:
-        proc = subprocess.run(
-            cmd,
-            cwd=str(PROJECT_ROOT),
-            env=_env(),
-            stdout=f,
-            stderr=subprocess.STDOUT,
-            timeout=timeout,
-            preexec_fn=_set_limits,
-        )
+    try:
+        with open(log_path, "w") as f:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=str(PROJECT_ROOT),
+                env=_env(),
+                stdout=f,
+                stderr=subprocess.STDOUT,
+            )
+    finally:
+        if old is not None:
+            with contextlib.suppress(ValueError, OSError):
+                resource.setrlimit(resource.RLIMIT_AS, old)
+
+    try:
+        proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.communicate()
     log.info("opencode done agent=%s exit=%d", agent, proc.returncode)
     return proc.returncode == 0

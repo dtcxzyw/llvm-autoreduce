@@ -45,13 +45,11 @@ class TestValidateMeta:
         with pytest.raises(ValueError, match="path separators"):
             _validate_meta({"bug_type": "crash", "reproducer_file": "evil\\windows.cmd"})
 
-    def test_shell_metachar_in_pipeline(self):
-        with pytest.raises(ValueError, match="shell metacharacters"):
-            _validate_meta({"bug_type": "crash", "pipeline": "-passes='foo' ; rm -rf /"})
-
-    def test_backtick_in_pipeline(self):
-        with pytest.raises(ValueError, match="shell metacharacters"):
-            _validate_meta({"bug_type": "crash", "pipeline": "`id`"})
+    def test_pipeline_with_metachars_accepted(self):
+        # Shell metacharacters in pipeline are no longer blocked (R13).
+        _validate_meta({"bug_type": "crash", "pipeline": "-passes='foo' ; rm -rf /"})
+        _validate_meta({"bug_type": "crash", "pipeline": "$(whoami)"})
+        _validate_meta({"bug_type": "crash", "pipeline": "`id`"})
 
     def test_crash_pattern_too_long(self):
         with pytest.raises(ValueError, match="crash_pattern too long"):
@@ -66,10 +64,6 @@ class TestValidateMeta:
 
     def test_default_o2_pipeline_ok(self):
         _validate_meta({"bug_type": "crash", "pipeline": "-passes='default<O2>'"})
-
-    def test_pipeline_with_dollar(self):
-        with pytest.raises(ValueError, match="shell metacharacters"):
-            _validate_meta({"bug_type": "crash", "pipeline": "$(whoami)"})
 
 
 class TestValidateResult:

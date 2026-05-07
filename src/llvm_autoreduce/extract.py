@@ -11,7 +11,7 @@ GODBOLT_PATTERN = re.compile(r"https?://godbolt\.org/z/([\w-]+)")
 # Known limitations: (a) code blocks containing literal ``` inside them will
 # be truncated, (b) trailing unclosed fence causes the block to be missed.
 # These are rare in LLVM bug reports and a full markdown parser is overkill.
-CODE_BLOCK_PATTERN = re.compile(r"```(?:llvm|c|cpp|c\+\+|cxx|ir)?\s*\n(.*?)```", re.DOTALL)
+CODE_BLOCK_PATTERN = re.compile(r"```(\w+)?\s*\n(.*?)```", re.DOTALL)
 ATTACHMENT_PATTERN = re.compile(r"!\[.*?\]\((https://githubusercontent\.com/[^)]+/([^/)]+))")
 
 
@@ -24,29 +24,16 @@ def find_attachment_urls(body):
 
 
 def extract_code_blocks(body):
-    return [m.group(1).strip() for m in CODE_BLOCK_PATTERN.finditer(body)]
+    return [(m.group(1), m.group(2).strip()) for m in CODE_BLOCK_PATTERN.finditer(body)]
 
 
-def classify_lang(content):
-    fused = content[:1024].strip().lower()
-    if "define " in fused or "@" in fused or "target datalayout" in fused:
-        return "ir"
-    if "class " in fused or "::" in fused or "template" in fused or "std::" in fused:
-        return "cpp"
-    return "c"
-
-
-def guess_extension(lang):
-    lang = lang.lower()
+def extension_for_lang(lang):
+    lang = (lang or "").lower()
     if lang in ("ir", "llvm", "llvm_ir"):
         return ".ll"
     if lang in ("cpp", "c++", "cxx", "hpp", "h++"):
         return ".cpp"
     if lang in ("c", "h"):
-        # ACCEPTED RISK (F9): .h header files are assigned .c extension.
-        # Godbolt rarely reports language as "h" and misclassification of
-        # a header as C source is harmless — the reducer agent classifies
-        # content heuristically before reduction.
         return ".c"
     return ".ll"
 
@@ -55,13 +42,13 @@ def assemble_reproducers(body, godbolt_sources, attachment_dir):
     sources = []
 
     for src, lang in godbolt_sources:
-        ext = guess_extension(lang)
+        ext = extension_for_lang(lang)
         sources.append((f"godbolt{ext}", src, lang))
 
-    for i, block in enumerate(extract_code_blocks(body)):
-        lang = classify_lang(block)
-        name = f"inline_{i + 1}{guess_extension(lang)}"
-        sources.append((name, block, lang))
+    for i, (lang_tag, block) in enumerate(extract_code_blocks(body)):
+        ext = extension_for_lang(lang_tag)
+        name = f"inline_{i + 1}{ext}"
+        sources.append((name, block, lang_tag or ""))
 
     for i, (_full_url, filename) in enumerate(find_attachment_urls(body), 1):
         if filename.lower().endswith((".ll", ".c", ".cpp", ".cxx")):
@@ -80,7 +67,6 @@ def assemble_reproducers(body, godbolt_sources, attachment_dir):
                     # These are rare in practice and individually non-critical.
                     log.warning("failed to read attachment: %s", safe_name)
                     continue
-                lang = classify_lang(content)
-                sources.append((safe_name, content, lang))
+                sources.append((safe_name, content, ""))
 
     return sources

@@ -2,11 +2,10 @@
 
 from llvm_autoreduce.extract import (
     assemble_reproducers,
-    classify_lang,
+    extension_for_lang,
     extract_code_blocks,
     find_attachment_urls,
     find_godbolt_links,
-    guess_extension,
 )
 
 
@@ -56,83 +55,72 @@ class TestCodeBlockExtraction:
         body = "```llvm\ndefine void @f() { ret void }\n```"
         blocks = extract_code_blocks(body)
         assert len(blocks) == 1
-        assert "define void @f()" in blocks[0]
+        tag, content = blocks[0]
+        assert tag == "llvm"
+        assert "define void @f()" in content
 
     def test_no_lang_tag(self):
         body = "```\ndefine void @f() { ret void }\n```"
         blocks = extract_code_blocks(body)
         assert len(blocks) == 1
+        tag, content = blocks[0]
+        assert tag is None
+        assert "define void @f()" in content
 
     def test_cpp_tag(self):
         body = "```cpp\nint main() { return 0; }\n```"
         blocks = extract_code_blocks(body)
         assert len(blocks) == 1
+        tag, content = blocks[0]
+        assert tag == "cpp"
 
     def test_multiple_blocks(self):
         body = "```llvm\ndefine @a()\n```\ntext\n```c\nint x;\n```"
         blocks = extract_code_blocks(body)
         assert len(blocks) == 2
-        assert "define @a()" in blocks[0]
-        assert "int x;" in blocks[1]
+        assert blocks[0][0] == "llvm"
+        assert "define @a()" in blocks[0][1]
+        assert blocks[1][0] == "c"
+        assert "int x;" in blocks[1][1]
 
     def test_no_code_blocks(self):
         assert extract_code_blocks("plain text") == []
 
 
-class TestClassifyLang:
-    def test_ir_by_define(self):
-        assert classify_lang("define void @f() { ret void }") == "ir"
-
-    def test_ir_by_at_symbol(self):
-        assert classify_lang("@.str = private constant [4 x i8] c\"foo\"") == "ir"
-
-    def test_ir_by_target_datalayout(self):
-        assert classify_lang("target datalayout = \"e-m:e-p270:32:32\"") == "ir"
-
-    def test_cpp_by_template(self):
-        assert classify_lang("template <typename T> void f(T t) {}") == "cpp"
-
-    def test_cpp_by_std(self):
-        assert classify_lang("std::vector<int> v;") == "cpp"
-
-    def test_cpp_by_scope_resolution(self):
-        assert classify_lang("Foo::bar()") == "cpp"
-
-    def test_defaults_to_c(self):
-        assert classify_lang("int main(void) { return 0; }") == "c"
-
-
-class TestGuessExtension:
+class TestExtensionForLang:
     def test_ir(self):
-        assert guess_extension("ir") == ".ll"
+        assert extension_for_lang("ir") == ".ll"
 
     def test_llvm(self):
-        assert guess_extension("llvm") == ".ll"
+        assert extension_for_lang("llvm") == ".ll"
 
     def test_llvm_ir(self):
-        assert guess_extension("llvm_ir") == ".ll"
+        assert extension_for_lang("llvm_ir") == ".ll"
 
     def test_cpp(self):
-        assert guess_extension("cpp") == ".cpp"
+        assert extension_for_lang("cpp") == ".cpp"
 
     def test_c_plus_plus(self):
-        assert guess_extension("c++") == ".cpp"
+        assert extension_for_lang("c++") == ".cpp"
 
     def test_cxx(self):
-        assert guess_extension("cxx") == ".cpp"
+        assert extension_for_lang("cxx") == ".cpp"
 
     def test_c(self):
-        assert guess_extension("c") == ".c"
+        assert extension_for_lang("c") == ".c"
 
     def test_h(self):
-        assert guess_extension("h") == ".c"
+        assert extension_for_lang("h") == ".c"
 
     def test_unknown_defaults_to_dot_ll(self):
-        assert guess_extension("rust") == ".ll"
+        assert extension_for_lang("rust") == ".ll"
+
+    def test_none_defaults_to_dot_ll(self):
+        assert extension_for_lang(None) == ".ll"
 
     def test_case_insensitive(self):
-        assert guess_extension("LLVM") == ".ll"
-        assert guess_extension("CPP") == ".cpp"
+        assert extension_for_lang("LLVM") == ".ll"
+        assert extension_for_lang("CPP") == ".cpp"
 
 
 class TestAssembleReproducers:
@@ -152,6 +140,22 @@ class TestAssembleReproducers:
         assert len(sources) == 1
         name, content, lang = sources[0]
         assert name == "inline_1.ll"
+        assert lang == "llvm"
+
+    def test_inline_no_tag(self, tmp_path):
+        body = "```\nint main(void) { return 0; }\n```"
+        sources = assemble_reproducers(body, [], tmp_path)
+        assert len(sources) == 1
+        name, content, lang = sources[0]
+        assert name == "inline_1.ll"
+        assert lang == ""
+
+    def test_inline_c_tag(self, tmp_path):
+        body = "```c\nint x;\n```"
+        sources = assemble_reproducers(body, [], tmp_path)
+        assert len(sources) == 1
+        name, content, lang = sources[0]
+        assert name == "inline_1.c"
 
     def test_attachment_skipped_if_missing(self, tmp_path):
         body = "![bug](https://githubusercontent.com/x/missing.ll)"
@@ -165,7 +169,6 @@ class TestAssembleReproducers:
         assert len(sources) == 1
         name, content, lang = sources[0]
         assert name == "attach_1.ll"
-        assert lang == "ir"
         assert "define i32 @main()" in content
 
     def test_attachment_non_code_ext_skipped(self, tmp_path):

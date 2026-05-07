@@ -2,6 +2,7 @@
 """Main daemon loop for llvm-autoreduce."""
 
 import atexit
+import contextlib
 import json
 import logging
 import os
@@ -94,26 +95,36 @@ def _check_toolchain():
 # processed issue ID is stored permanently. For a long-running daemon
 # this file accumulates entries linearly in time. Manual pruning is
 # acceptable for now.
+_processed_cache = None
+
+
+def _load_processed_cache():
+    global _processed_cache
+    _processed_cache = set()
+    if config.PROCESSED.exists():
+        try:
+            for line in config.PROCESSED.read_text().splitlines():
+                stripped = line.strip()
+                if stripped:
+                    _processed_cache.add(stripped)
+        except OSError:
+            log.warning("failed to read %s, starting with empty cache", config.PROCESSED)
+
+
 def mark_processed(issue_id):
     # One-ID-per-line format: each line is an issue number. Corrupt lines
     # are silently skipped. This avoids the all-or-nothing failure mode
     # of a JSON array — a single bad line never loses the rest of the file.
     with open(config.PROCESSED, "a") as f:
         f.write(f"{issue_id}\n")
+    if _processed_cache is not None:
+        _processed_cache.add(str(issue_id))
 
 
 def is_processed(issue_id):
-    if not config.PROCESSED.exists():
-        return False
-    target = str(issue_id)
-    try:
-        for line in config.PROCESSED.read_text().splitlines():
-            if line.strip() == target:
-                return True
-    except OSError:
-        log.warning("failed to read %s, treating as empty", config.PROCESSED)
-        return False
-    return False
+    if _processed_cache is None:
+        _load_processed_cache()
+    return str(issue_id) in _processed_cache
 
 
 def read_prompt(name):
@@ -121,14 +132,34 @@ def read_prompt(name):
     return path.read_text()
 
 
-def _set_limits():
-    """Set resource limits on child processes to prevent OOM."""
+def _run_process(cmd, **kwargs):
+    """Run subprocess with 8GB RLIMIT_AS propagated to child via pre-fork inheritance.
+
+    Sets the address-space limit before forking so the child inherits it, then
+    restores the parent limit immediately after fork(). This replaces preexec_fn
+    (deprecated in Python 3.11+). The daemon is single-threaded so the brief
+    parent-side limit change is harmless.
+    """
+    timeout = kwargs.pop("timeout", None)
+    old = resource.getrlimit(resource.RLIMIT_AS)
+    limit = 8 * 1024 ** 3
     try:
-        # 8 GB address space — enough for opt/llc/llvm-reduce on reduced IR.
-        limit = 8 * 1024 ** 3
         resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
     except (ValueError, OSError):
-        pass
+        old = None
+    try:
+        proc = subprocess.Popen(cmd, **kwargs)
+    finally:
+        if old is not None:
+            with contextlib.suppress(ValueError, OSError):
+                resource.setrlimit(resource.RLIMIT_AS, old)
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.communicate()
+        raise
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
 
 VALID_BUG_TYPES = frozenset({"crash", "miscompilation"})
@@ -151,24 +182,13 @@ def _validate_meta(meta):
     reproducer = meta.get("reproducer_file", "")
     if reproducer and ("/" in reproducer or "\\" in reproducer or "\0" in reproducer):
         raise ValueError(f"extract.json reproducer_file contains path separators: {reproducer!r}")
-    pipeline = meta.get("pipeline", "")
-    if pipeline:
-        # Shell metacharacters that could cause command injection. Note:
-        # < > are intentionally excluded — they are part of LLVM pass syntax
-        # (e.g. -passes='default<O2>') and are safe with list-based subprocess.
-        # ACCEPTED RISK (R4): The pipeline string passes through to the reducer
-        # agent's prompt, which has bash access. Agents may reinterpret < > as
-        # shell redirection when generating scripts. This validator only guards
-        # against direct process.Popen injection; downstream AI behavior is
-        # constrained only by natural-language prompts, not technical controls.
-        # ACCEPTED RISK (R10): ! (history expansion) and # (comment) are
-        # not blocked — they are not part of the list-based subprocess
-        # injection surface this validator guards. As with R4, the reducer
-        # agent has bash access and natural-language prompts are the only
-        # downstream constraint on AI-generated scripts.
-        dangerous = {"$", "`", ";", "|", "&", "(", ")", "{", "}"}
-        if any(c in pipeline for c in dangerous):
-            raise ValueError(f"extract.json pipeline contains shell metacharacters: {pipeline!r}")
+    _pipeline = meta.get("pipeline", "")
+    # ACCEPTED RISK (R13): No shell metacharacter validation on pipeline.
+    # The pipeline string passes through to the reducer agent's prompt, which
+    # has unrestricted bash access. Blocking shell metacharacters here does
+    # not provide meaningful defense — the reducer agent can generate and
+    # execute arbitrary scripts regardless. Path traversal on reproducer_file
+    # is still validated because the daemon writes those files itself.
     crash_pattern = meta.get("crash_pattern", "")
     # crash_pattern is a literal substring (not regex) matched against
     # crash output via plain string containment.
@@ -232,10 +252,9 @@ def verify_crash(result, workdir_path, crash_pattern):
     # already has unrestricted bash access within the workdir.
     cmd = [tool_path] + shlex.split(result.get("args", "")) + [safe_ir]
     try:
-        p = subprocess.run(
-            cmd, capture_output=True, text=True,
+        p = _run_process(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
-            preexec_fn=_set_limits,
         )
     except subprocess.TimeoutExpired:
         log.error("verify crash timeout")
@@ -259,21 +278,19 @@ def verify_llubi(result, workdir_path):
     # Use the built LLVM toolchain opt binary, never PATH.
     opt_path = str(config.LLVM_BIN / "opt")
     try:
-        ref = subprocess.run(
+        ref = _run_process(
             [str(config.LLUBI_BIN)] + shlex.split(llubi_args) + [safe_ir],
-            capture_output=True, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
-            preexec_fn=_set_limits,
         )
         if ref.returncode != 0:
             log.error("llubi ref failed: %s", ref.stderr[:200])
             return False
 
-        opt_out = subprocess.run(
+        opt_out = _run_process(
             [opt_path] + shlex.split(args) + [safe_ir, "-S"],
-            capture_output=True, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
-            preexec_fn=_set_limits,
         )
         if opt_out.returncode != 0:
             log.error("llubi opt failed: %s", opt_out.stderr[:200])
@@ -281,11 +298,10 @@ def verify_llubi(result, workdir_path):
         transformed = workdir_path / "__transformed.ll"
         transformed.write_text(opt_out.stdout)
 
-        test = subprocess.run(
+        test = _run_process(
             [str(config.LLUBI_BIN)] + shlex.split(llubi_args) + ["__transformed.ll"],
-            capture_output=True, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
-            preexec_fn=_set_limits,
         )
         if test.returncode != 0:
             log.error("llubi test crashed: signal=%d stderr=%s", -test.returncode if test.returncode < 0 else test.returncode, test.stderr[:200])
@@ -322,11 +338,10 @@ def verify_alive2(result, workdir_path):
     # Use the built LLVM toolchain opt binary, never PATH.
     opt_path = str(config.LLVM_BIN / "opt")
     try:
-        opt_out = subprocess.run(
+        opt_out = _run_process(
             [opt_path] + shlex.split(args) + [safe_ir, "-S"],
-            capture_output=True, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
-            preexec_fn=_set_limits,
         )
         if opt_out.returncode != 0:
             log.error("alive2 opt failed: %s", opt_out.stderr[:200])
@@ -334,12 +349,11 @@ def verify_alive2(result, workdir_path):
         transformed = workdir_path / "__transformed.ll"
         transformed.write_text(opt_out.stdout)
 
-        p = subprocess.run(
+        p = _run_process(
             [str(config.ALIVE2_BIN), "--disable-undef-input"]
             + shlex.split(alive2_args) + [safe_ir, "__transformed.ll"],
-            capture_output=True, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
-            preexec_fn=_set_limits,
         )
         # If alive-tv crashes (negative returncode), treat as inconclusive
         # — not a confirmed miscompilation.
@@ -440,6 +454,7 @@ def _fetch_godbolt(body):
     if not links:
         return []
     sources = []
+    failed = 0
     for short_id in links:
         try:
             data = _fetch_godbolt_single(short_id)
@@ -450,6 +465,9 @@ def _fetch_godbolt(body):
                     sources.append((src, lang))
         except (requests.RequestException, json.JSONDecodeError):
             log.exception("godbolt fetch failed id=%s", short_id)
+            failed += 1
+    if failed:
+        log.warning("godbolt fetch: %d/%d links failed", failed, len(links))
     return sources
 
 
@@ -546,6 +564,13 @@ def reprocess_issue(issue):
     #        interestingness.sh (via llvm-reduce --test), which the security reviewer
     #        never inspects. The reviewer's coverage is limited to the initial
     #        reproducer content, not downstream AI artifact generation.
+    #   (R12) Compile-time code execution — C/C++ reproducers can execute arbitrary
+    #        code at compile time via __attribute__((constructor)), consteval
+    #        functions, template metaprogramming, #pragma directives, or #include
+    #        of sensitive files. The security reviewer is static-only (bash: deny)
+    #        and cannot detect these patterns. The extractor agent compiles these
+    #        sources with full bash access in the next step. Defense against
+    #        compile-time attacks is left to OS-level isolation (Docker).
     review_prompt = read_prompt("security-reviewer.txt").format(
         issue_file="issue.md",
         reproducer_file="reproducers.md",
