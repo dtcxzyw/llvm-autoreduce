@@ -56,7 +56,7 @@ def _remove_pidfile():
 
 
 def _check_toolchain():
-    """Verify critical toolchain binaries exist and are executable.
+    """Verify critical toolchain binaries exist, are executable, and can run.
 
     Called after a BuildError in the main loop to detect whether the
     toolchain was left in a corrupt state that would cause all subsequent
@@ -69,6 +69,17 @@ def _check_toolchain():
             missing.append(f"{name} (missing)")
         elif not os.access(path, os.X_OK):
             missing.append(f"{name} (not executable)")
+        else:
+            try:
+                result = subprocess.run(
+                    [str(path), "--version"], capture_output=True, timeout=30,
+                )
+                if result.returncode != 0:
+                    missing.append(f"{name} (exit {result.returncode})")
+            except subprocess.TimeoutExpired:
+                missing.append(f"{name} (timeout)")
+            except OSError:
+                missing.append(f"{name} (failed to run)")
     if missing:
         log.critical("toolchain health check FAILED: %s", ", ".join(missing))
         return False
@@ -159,6 +170,11 @@ def _validate_meta(meta):
         # shell redirection when generating scripts. This validator only guards
         # against direct process.Popen injection; downstream AI behavior is
         # constrained only by natural-language prompts, not technical controls.
+        # ACCEPTED RISK (R10): ! (history expansion) and # (comment) are
+        # not blocked — they are not part of the list-based subprocess
+        # injection surface this validator guards. As with R4, the reducer
+        # agent has bash access and natural-language prompts are the only
+        # downstream constraint on AI-generated scripts.
         dangerous = {"$", "`", ";", "|", "&", "(", ")", "{", "}"}
         if any(c in pipeline for c in dangerous):
             raise ValueError(f"extract.json pipeline contains shell metacharacters: {pipeline!r}")
@@ -179,7 +195,7 @@ def _safe_relative(workdir_path, filename):
 
 
 def _validate_result(result):
-    """Reject result.json with missing required fields.
+    """Reject result.json with missing or invalid schema fields.
 
     crash_pattern is intentionally NOT validated here — it originates
     exclusively from extract.json (the extractor agent). The reducer agent
@@ -189,6 +205,17 @@ def _validate_result(result):
     """
     if "ir_file" not in result:
         raise ValueError("result.json missing required field: ir_file")
+    result_type = result.get("type", "")
+    if result_type == "crash":
+        tool = result.get("tool", "opt")
+        if tool not in ("opt", "llc", "lli"):
+            raise ValueError(f"result.json crash type with invalid tool: {tool!r}")
+    elif result_type == "miscompilation":
+        oracle = result.get("oracle", "")
+        if oracle not in ("llubi", "alive2"):
+            raise ValueError(f"result.json miscompilation type with unknown oracle: {oracle!r}")
+    else:
+        raise ValueError(f"result.json has unknown type: {result_type!r}")
 
 
 def verify_crash(result, workdir_path, crash_pattern):
@@ -478,13 +505,18 @@ def reprocess_issue(issue):
 
     wd = workdir.create(issue_id)
 
-    issue_text = f"# Issue #{issue_id}: {title}\n\n{body}"
-    workdir.write(wd / "issue.md", issue_text)
-
     # Step 1: extract all reproducers (code blocks, Godbolt, attachments)
     godbolt_sources = _fetch_godbolt(body)
     _download_attachments(body, wd)
     sources = extract.assemble_reproducers(body, godbolt_sources, wd)
+    # Truncate issue body to 10 KB before passing to AI agents — large
+    # bodies waste context window and agent inference time without adding
+    # useful reproducer information (already extracted above).
+    if len(body) > 10240:
+        log.info("issue=%d body too large (%d bytes), truncating to 10KB", issue_id, len(body))
+        body = body[:10240]
+    issue_text = f"# Issue #{issue_id}: {title}\n\n{body}"
+    workdir.write(wd / "issue.md", issue_text)
     # ACCEPTED RISK (F12): Reproducers exceeding 8 KB are skipped entirely.
     # Large LLVM IR inputs are almost certainly not yet reduced and would
     # timeout reduction or exhaust LLM context. Skipping them avoids
@@ -676,12 +708,23 @@ def reprocess_issue(issue):
     log.info("issue=%d verify pass", issue_id)
 
     # Step 6: submit
-    report = workdir.read(wd / "report.md")
+    report_path = wd / "report.md"
+    if not report_path.exists():
+        log.warning("issue=%d report.md missing after reduction", issue_id)
+        mark_processed(issue_id)
+        workdir.cleanup(issue_id)
+        return
+    report = workdir.read(report_path)
     report_title = f"[Reduced] {meta['bug_type']} — #{issue_id}"
-    url = github.create_issue(report_title, report)
-    log.info("issue=%d submitted %s", issue_id, url)
-
+    # Mark processed before submission — the reduced result is cached
+    # locally in the workdir. If submission fails persistently the
+    # daemon will not re-process this issue on subsequent rounds.
     mark_processed(issue_id)
+    try:
+        url = github.create_issue(report_title, report)
+        log.info("issue=%d submitted %s", issue_id, url)
+    except Exception:
+        log.exception("issue=%d submission failed (result cached locally)", issue_id)
     workdir.cleanup(issue_id)
 
 

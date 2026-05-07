@@ -76,12 +76,35 @@ class TestValidateResult:
     def test_crash_ok(self):
         _validate_result({"ir_file": "repro.ll", "type": "crash"})
 
-    def test_llubi_ok(self):
-        _validate_result({"ir_file": "repro.ll", "oracle": "llubi"})
+    def test_crash_with_tool_ok(self):
+        _validate_result({"ir_file": "repro.ll", "type": "crash", "tool": "opt"})
 
-    def test_alive2_ok(self):
-        _validate_result({"ir_file": "repro.ll", "oracle": "alive2"})
+    def test_crash_with_bad_tool_raises(self):
+        with pytest.raises(ValueError, match="invalid tool"):
+            _validate_result({"ir_file": "repro.ll", "type": "crash", "tool": "alive-tv"})
+
+    def test_miscompilation_llubi_ok(self):
+        _validate_result({"ir_file": "repro.ll", "type": "miscompilation", "oracle": "llubi"})
+
+    def test_miscompilation_alive2_ok(self):
+        _validate_result({"ir_file": "repro.ll", "type": "miscompilation", "oracle": "alive2"})
+
+    def test_miscompilation_missing_oracle_raises(self):
+        with pytest.raises(ValueError, match="unknown oracle"):
+            _validate_result({"ir_file": "repro.ll", "type": "miscompilation"})
+
+    def test_miscompilation_bad_oracle_raises(self):
+        with pytest.raises(ValueError, match="unknown oracle"):
+            _validate_result({"ir_file": "repro.ll", "type": "miscompilation", "oracle": "bad_oracle"})
 
     def test_missing_ir_file_raises(self):
         with pytest.raises(ValueError, match="ir_file"):
             _validate_result({"type": "crash"})
+
+    def test_unknown_type_raises(self):
+        with pytest.raises(ValueError, match="unknown type"):
+            _validate_result({"ir_file": "repro.ll", "type": "exploit"})
+
+    def test_missing_type_raises(self):
+        with pytest.raises(ValueError, match="unknown type"):
+            _validate_result({"ir_file": "repro.ll"})
