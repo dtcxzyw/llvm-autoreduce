@@ -6,7 +6,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-GODBOLT_PATTERN = re.compile(r"https?://godbolt\.org/z/([\w-]+)")
+GODBOLT_PATTERN = re.compile(r"https?://(?:www\.)?godbolt\.org/z/([\w-]+)")
 # NOTE: This regex uses non-greedy matching and assumes well-formed markdown.
 # Known limitations: (a) code blocks containing literal ``` inside them will
 # be truncated, (b) trailing unclosed fence causes the block to be missed.

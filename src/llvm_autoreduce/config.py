@@ -16,6 +16,7 @@ LLUBI_BIN = Path(os.environ.get("LLUBI_PATH", LLUBI_TRUNK / "build" / "bin" / "l
 
 KNOWN_GOOD = WORK_ROOT / ".known-good"
 PROCESSED = WORK_ROOT / "processed.txt"
+DROPPED = WORK_ROOT / "dropped.txt"
 DAEMON_LOG = WORK_ROOT / "daemon.log"
 
 AUTOREDUCE_TOKEN = os.environ.get("AUTOREDUCE_TOKEN", "")

@@ -2,7 +2,12 @@
 
 import pytest
 
-from llvm_autoreduce.daemon import _validate_meta, _validate_result, _validate_verdict
+from llvm_autoreduce.daemon import (
+    _validate_meta,
+    _validate_result,
+    _validate_verdict,
+    verify_extract_consistency,
+)
 
 
 class TestValidateVerdict:
@@ -126,3 +131,31 @@ class TestValidateResult:
     def test_missing_type_raises(self):
         with pytest.raises(ValueError, match="unknown type"):
             _validate_result({"ir_file": "repro.ll"})
+
+
+class TestVerifyExtractConsistency:
+    def test_clean_consistency_ok(self, tmp_path):
+        meta = {"bug_type": "crash", "reproducer_file": "test.ll", "crash_pattern": "failed"}
+        result = {"type": "crash"}
+        (tmp_path / "test.ll").write_text("define void @f() { ret void }")
+        assert verify_extract_consistency(meta, result, tmp_path) is True
+
+    def test_bug_type_mismatch(self, tmp_path):
+        meta = {"bug_type": "crash", "crash_pattern": "oops"}
+        result = {"type": "miscompilation", "oracle": "llubi"}
+        assert verify_extract_consistency(meta, result, tmp_path) is False
+
+    def test_crash_without_pattern(self, tmp_path):
+        meta = {"bug_type": "crash"}
+        result = {"type": "crash"}
+        assert verify_extract_consistency(meta, result, tmp_path) is False
+
+    def test_reproducer_file_missing(self, tmp_path):
+        meta = {"bug_type": "crash", "reproducer_file": "nonexistent.ll", "crash_pattern": "err"}
+        result = {"type": "crash"}
+        assert verify_extract_consistency(meta, result, tmp_path) is False
+
+    def test_reproducer_file_no_name_ok(self, tmp_path):
+        meta = {"bug_type": "crash", "crash_pattern": "err"}
+        result = {"type": "crash"}
+        assert verify_extract_consistency(meta, result, tmp_path) is True

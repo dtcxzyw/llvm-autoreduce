@@ -27,6 +27,9 @@ class TestGodboltLinks:
     def test_http(self):
         assert find_godbolt_links("http://godbolt.org/z/xyz") == ["xyz"]
 
+    def test_www_subdomain(self):
+        assert find_godbolt_links("https://www.godbolt.org/z/abc123") == ["abc123"]
+
 
 class TestAttachmentUrls:
     def test_basic(self):

@@ -105,6 +105,10 @@ def _cleanup_old_workdirs():
             if path.stat().st_mtime < cutoff:
                 shutil.rmtree(path)
                 removed += 1
+        # ACCEPTED RISK (F16): Silently ignore OSError during cleanup (permission
+        # denied, disk-full, EIO). Stale workdirs may accumulate if the error is
+        # persistent, but surfacing every filesystem hiccup to the log would be
+        # noisy and each individual failure is non-critical.
         except OSError:
             pass
     if removed:
@@ -141,6 +145,12 @@ def mark_processed(issue_id):
         f.write(f"{issue_id}\n")
     if _processed_cache is not None:
         _processed_cache.add(str(issue_id))
+
+
+def mark_dropped(issue_id, reason):
+    """Record a dropped issue with timestamp and reason to config.DROPPED."""
+    with open(config.DROPPED, "a") as f:
+        f.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')}\t{issue_id}\t{reason}\n")
 
 
 def is_processed(issue_id):
@@ -448,7 +458,7 @@ def verify(result, workdir_path, meta):
     return False
 
 
-def verify_extract_consistency(meta, result):
+def verify_extract_consistency(meta, result, workdir_path):
     """Cross-check extract.json metadata against reduce result.json.
 
     crash_pattern is validated against meta only — result.json no longer
@@ -466,6 +476,11 @@ def verify_extract_consistency(meta, result):
         return False
     if bug_type == "miscompilation" and crash_pattern:
         log.warning("extract bug_type=miscompilation but crash_pattern is non-empty, ignoring crash_pattern")
+
+    reproducer_file = meta.get("reproducer_file", "")
+    if reproducer_file and not (workdir_path / reproducer_file).exists():
+        log.warning("extract reproducer_file %r not found in workdir", reproducer_file)
+        return False
 
     return True
 
@@ -520,8 +535,15 @@ def _fetch_godbolt(body):
 
 
 def _download_attachments(body, wd):
+    # ACCEPTED RISK (F17): Attachment count is capped at 3 per issue to
+    # prevent abuse / resource exhaustion from issues with many attachments.
+    # Most LLVM bug reports contain at most 1-2 reproducer attachments.
+    MAX_ATTACHMENTS = 3
     attach_idx = 0
     for url, filename in extract.find_attachment_urls(body):
+        if attach_idx >= MAX_ATTACHMENTS:
+            log.info("attachment limit (%d) reached, ignoring remaining attachments", MAX_ATTACHMENTS)
+            break
         if not filename.lower().endswith((".ll", ".c", ".cpp", ".cxx")):
             continue
         attach_idx += 1
@@ -549,6 +571,7 @@ def reprocess_issue(issue):
     if issue_labels & config.SKIP_LABELS:
         matched = issue_labels & config.SKIP_LABELS
         log.info("issue=%d skipped: label match %s", issue_id, matched)
+        mark_dropped(issue_id, "label_skip")
         mark_processed(issue_id)
         return
 
@@ -558,6 +581,7 @@ def reprocess_issue(issue):
 
     if not body.strip():
         log.info("issue=%d empty body, skip", issue_id)
+        mark_dropped(issue_id, "empty_body")
         mark_processed(issue_id)
         return
 
@@ -593,6 +617,7 @@ def reprocess_issue(issue):
     for _name, content, _lang in sources:
         if len(content) > 8192:
             log.info("issue=%d reproducer %s too large (%d bytes), skip", issue_id, _name, len(content))
+            mark_dropped(issue_id, "reproducer_too_large")
             mark_processed(issue_id)
             workdir.cleanup(issue_id)
             return
@@ -631,6 +656,7 @@ def reprocess_issue(issue):
     )
     if not ok:
         log.warning("issue=%d review agent failed", issue_id)
+        mark_dropped(issue_id, "review_agent_failed")
         mark_processed(issue_id)
         workdir.cleanup(issue_id)
         return
@@ -638,6 +664,7 @@ def reprocess_issue(issue):
     review_path = wd / "review.json"
     if not review_path.exists():
         log.warning("issue=%d review.json missing", issue_id)
+        mark_dropped(issue_id, "review_json_missing")
         mark_processed(issue_id)
         workdir.cleanup(issue_id)
         return
@@ -646,6 +673,7 @@ def reprocess_issue(issue):
         verdict = workdir.read_json(review_path)
     except json.JSONDecodeError:
         log.warning("issue=%d review.json invalid", issue_id)
+        mark_dropped(issue_id, "review_json_invalid")
         mark_processed(issue_id)
         workdir.cleanup(issue_id)
         return
@@ -661,12 +689,14 @@ def reprocess_issue(issue):
         _validate_verdict(verdict)
     except ValueError:
         log.warning("issue=%d review.json validation failed", issue_id)
+        mark_dropped(issue_id, "review_validation_failed")
         mark_processed(issue_id)
         workdir.cleanup(issue_id)
         return
 
     if verdict.get("malicious"):
         log.info("issue=%d skipped: malicious", issue_id)
+        mark_dropped(issue_id, "malicious")
         mark_processed(issue_id)
         workdir.cleanup(issue_id)
         return
@@ -688,6 +718,7 @@ def reprocess_issue(issue):
     )
     if not ok:
         log.warning("issue=%d extractor agent failed", issue_id)
+        mark_dropped(issue_id, "extractor_agent_failed")
         mark_processed(issue_id)
         workdir.cleanup(issue_id)
         return
@@ -698,11 +729,13 @@ def reprocess_issue(issue):
             meta = workdir.read_json(extract_path)
         except json.JSONDecodeError:
             log.warning("issue=%d extract.json invalid, skip", issue_id)
+            mark_dropped(issue_id, "extract_json_invalid")
             mark_processed(issue_id)
             workdir.cleanup(issue_id)
             return
     else:
         log.warning("issue=%d extract.json missing, skip", issue_id)
+        mark_dropped(issue_id, "extract_json_missing")
         mark_processed(issue_id)
         workdir.cleanup(issue_id)
         return
@@ -712,6 +745,7 @@ def reprocess_issue(issue):
         _validate_meta(meta)
     except ValueError:
         log.warning("issue=%d extract.json validation failed", issue_id)
+        mark_dropped(issue_id, "extract_validation_failed")
         mark_processed(issue_id)
         workdir.cleanup(issue_id)
         return
@@ -746,6 +780,7 @@ def reprocess_issue(issue):
     )
     if not ok:
         log.warning("issue=%d reduce agent failed", issue_id)
+        mark_dropped(issue_id, "reducer_agent_failed")
         mark_processed(issue_id)
         workdir.cleanup(issue_id)
         return
@@ -753,6 +788,7 @@ def reprocess_issue(issue):
     result_path = wd / "result.json"
     if not result_path.exists():
         log.warning("issue=%d result.json missing", issue_id)
+        mark_dropped(issue_id, "result_json_missing")
         mark_processed(issue_id)
         workdir.cleanup(issue_id)
         return
@@ -761,6 +797,7 @@ def reprocess_issue(issue):
         result = workdir.read_json(result_path)
     except json.JSONDecodeError:
         log.warning("issue=%d result.json invalid", issue_id)
+        mark_dropped(issue_id, "result_json_invalid")
         mark_processed(issue_id)
         workdir.cleanup(issue_id)
         return
@@ -769,13 +806,15 @@ def reprocess_issue(issue):
         _validate_result(result)
     except ValueError:
         log.warning("issue=%d result.json validation failed", issue_id)
+        mark_dropped(issue_id, "result_validation_failed")
         mark_processed(issue_id)
         workdir.cleanup(issue_id)
         return
 
     # Step 5: verify before submitting
-    if not verify_extract_consistency(meta, result):
+    if not verify_extract_consistency(meta, result, wd):
         log.warning("issue=%d extract-result consistency check failed", issue_id)
+        mark_dropped(issue_id, "consistency_check_failed")
         mark_processed(issue_id)
         workdir.cleanup(issue_id)
         return
@@ -789,6 +828,7 @@ def reprocess_issue(issue):
     # occasionally discarding a valid one.
     if not verify(result, wd, meta):
         log.warning("issue=%d verify failed", issue_id)
+        mark_dropped(issue_id, "verify_failed")
         mark_processed(issue_id)
         workdir.cleanup(issue_id)
         return
@@ -798,6 +838,7 @@ def reprocess_issue(issue):
     report_path = wd / "report.md"
     if not report_path.exists():
         log.warning("issue=%d report.md missing after reduction", issue_id)
+        mark_dropped(issue_id, "report_md_missing")
         mark_processed(issue_id)
         workdir.cleanup(issue_id)
         return
@@ -846,6 +887,8 @@ def main():
     atexit.register(_remove_pidfile)
     signal.signal(signal.SIGTERM, _handle_shutdown)
     signal.signal(signal.SIGINT, _handle_shutdown)
+    signal.signal(signal.SIGQUIT, _handle_shutdown)
+    signal.signal(signal.SIGHUP, _handle_shutdown)
 
     log.info("llvm-autoreduce daemon starting")
 
