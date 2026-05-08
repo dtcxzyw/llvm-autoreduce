@@ -633,45 +633,24 @@ def reprocess_issue(issue):
     # the time of issue fetch.
 
     # ACCEPTED RISK (F27): When an issue is retried after a failed submission,
-    # workdir.create reuses the existing directory (exist_ok=True). If the issue
-    # body was edited between daemon rounds to remove attachments, stale
-    # attachment* files from the previous run may persist and be picked up by
-    # assemble_reproducers. This is accepted because issue-body edits between
-    # rounds are extremely rare — the typical retry case is a transient GitHub
-    # API error with an unchanged body.
+    # workdir.create reuses the existing directory (exist_ok=True). Stale files
+    # from the previous run may persist. This is accepted because issue-body
+    # edits between rounds are extremely rare — the typical retry case is a
+    # transient GitHub API error with an unchanged body.
     wd = workdir.create(issue_id)
 
-    # Step 1: extract all reproducers (code blocks, Godbolt, attachments)
+    # Step 1: download raw materials (Godbolt sources, attachments, issue body).
+    # No mechanical extraction — the AI agents parse everything themselves.
     godbolt_sources = _fetch_godbolt(body)
     _download_attachments(body, wd)
-    sources = extract.assemble_reproducers(body, godbolt_sources, wd)
-    # Truncate issue body to 10 KB before passing to AI agents — large
-    # bodies waste context window and agent inference time without adding
-    # useful reproducer information (already extracted above).
+    for idx, (src, _lang) in enumerate(godbolt_sources, 1):
+        workdir.write(wd / f"godbolt_{idx}", src)
+    # Truncate issue body to 10 KB before passing to AI agents.
     if len(body) > 10240:
         log.info("issue=%d body too large (%d bytes), truncating to 10KB", issue_id, len(body))
         body = body[:10240]
     issue_text = f"# Issue #{issue_id}: {title}\n\n{body}"
     workdir.write(wd / "issue.md", issue_text)
-    # ACCEPTED RISK (F12): Reproducers exceeding 8 KB are skipped entirely.
-    # Large LLVM IR inputs are almost certainly not yet reduced and would
-    # timeout reduction or exhaust LLM context. Skipping them avoids
-    # wasting agent inference time on inputs that are too large to be
-    # usefully reduced in the current single-pass pipeline. Manual
-    # pre-reduction or a future two-phase pipeline can handle these later.
-    for _name, content, _lang in sources:
-        if len(content) > 8192:
-            log.info("issue=%d reproducer %s too large (%d bytes), skip", issue_id, _name, len(content))
-            mark_dropped(issue_id, "reproducer_too_large")
-            mark_processed(issue_id)
-            workdir.cleanup(issue_id)
-            return
-    reproducer_texts = []
-    for name, content, _lang in sources:
-        target = wd / name
-        workdir.write(target, content)
-        reproducer_texts.append(f"### File: {name}\n```\n{content[:8192]}\n```")
-    workdir.write(wd / "reproducers.md", "\n\n".join(reproducer_texts))
 
     # Step 2: security review (bash denied) — audit + classify.
     # ACCEPTED RISK: The security reviewer rejects only code-level malware patterns
@@ -694,10 +673,7 @@ def reprocess_issue(issue):
     #        has no mechanism to pass or verify bash:deny, and does not inspect
     #        the agent's execution log. If opencode's config handling changes,
     #        the reviewer silently gains full bash access on untrusted content.
-    review_prompt = read_prompt("security-reviewer.txt").format(
-        issue_file="issue.md",
-        reproducer_file="reproducers.md",
-    )
+    review_prompt = read_prompt("security-reviewer.txt")
     ok = opencode.run(
         agent="security-reviewer",
         workdir=wd,
@@ -905,18 +881,24 @@ def main():
         sys.exit(1)
 
     # Verify required binaries exist before entering the poll loop.
-    # Oracle binaries (alive-tv, llubi_legacy) are not checked here —
-    # they are built by tools.update_all() in the first loop iteration
-    # and verified by _check_toolchain() on build errors / timeouts.
+    # LLVM tools are checked against the self-maintained trunk build at
+    # config.LLVM_BIN (never PATH). Oracle binaries (alive-tv, llubi_legacy)
+    # are built by tools.update_all() in the first loop iteration and
+    # verified by _check_toolchain() on build errors / timeouts.
     missing = []
-    for binary in ["opencode", "opt", "clang", "llc", "lli", "llvm-reduce"]:
-        path = shutil.which(binary)
-        if path is None:
-            missing.append(binary)
-        else:
+    opencode_path = shutil.which("opencode")
+    if opencode_path is None:
+        missing.append("opencode")
+    else:
+        log.info("found opencode at %s", opencode_path)
+    for binary in ["opt", "clang", "llc", "lli", "llvm-reduce"]:
+        path = config.LLVM_BIN / binary
+        if path.is_file() and os.access(path, os.X_OK):
             log.info("found %s at %s", binary, path)
+        else:
+            missing.append(binary)
     if missing:
-        log.critical("required binaries not found on PATH: %s", ", ".join(missing))
+        log.critical("required binaries not found: %s", ", ".join(missing))
         sys.exit(1)
 
     _write_pidfile()
@@ -943,15 +925,8 @@ def main():
             for issue in issues:
                 try:
                     reprocess_issue(issue)
-                # ACCEPTED RISK (F28): Unhandled exceptions from reprocess_issue
-                # permanently mark the issue as processed with no retry. Code
-                # bugs, unexpected API response shapes, or transient edge cases
-                # that escape reprocess_issue's internal error handling cause
-                # silent data loss for that issue number.
                 except Exception:
-                    log.exception("issue=%d unhandled error", issue.get("number", "?"))
-                    log.warning("issue=%d marked as processed due to unhandled exception", issue.get("number", "?"))
-                    mark_processed(issue.get("number", "?"))
+                    log.exception("issue=%d unhandled error (will retry next round)", issue.get("number", "?"))
             log.info("round done")
         except tools.BuildError:
             log.exception("round failed: toolchain build error")

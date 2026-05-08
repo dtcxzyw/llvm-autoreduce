@@ -1,4 +1,4 @@
-Read `{issue_file}` for the bug report and `{reproducer_file}` for all reproducer files.
+Read `issue.md` for the bug report. Inspect ALL files in the working directory for reproducer code: Godbolt sources (`godbolt_1`, `godbolt_2`, ...) and attachments (`attachment1`, `attachment2`, ...). The issue body may also contain inline code blocks with reproducer code.
 
 Check ALL reproducer content for malicious patterns (system/exec/fork/popen calls, file tampering, network operations, obfuscated shell commands, suspicious includes).
 

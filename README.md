@@ -26,13 +26,10 @@ uv pip install -e .
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `AUTOREDUCE_TOKEN` | GitHub personal access token (required) | — |
-| `LLVM_BIN_PATH` | Path to LLVM `build/bin/` | `work/llvm-trunk/build/bin` |
-| `ALIVE2_PATH` | Path to `alive-tv` binary | `work/alive2-trunk/build/bin/alive-tv` |
-| `LLUBI_PATH` | Path to `llubi_legacy` binary | `work/llubi-trunk/build/bin/llubi_legacy` |
 
 ### Toolchain
 
-Run `scripts/update-tools.sh` to clone and build LLVM, Alive2, and LLUBI from source, or point the environment variables above at pre-built installations.
+Run `scripts/update-tools.sh` to clone and build LLVM, Alive2, and LLUBI from source into `work/`.
 
 ## Usage
 

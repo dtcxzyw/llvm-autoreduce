@@ -6,7 +6,7 @@ import os
 import resource
 import subprocess
 
-from .config import PROJECT_ROOT
+from .config import ALIVE2_BIN, LLUBI_BIN, LLVM_BIN, PROJECT_ROOT
 
 log = logging.getLogger(__name__)
 
@@ -30,9 +30,7 @@ def _env():
     for key, val in os.environ.items():
         if key.startswith("OPENCODE_"):
             env[key] = val
-    paths = [str(PROJECT_ROOT / "work" / "llvm-trunk" / "build" / "bin"),
-             str(PROJECT_ROOT / "work" / "alive2-trunk" / "build" / "bin"),
-             str(PROJECT_ROOT / "work" / "llubi-trunk" / "build" / "bin")]
+    paths = [str(LLVM_BIN), str(ALIVE2_BIN.parent), str(LLUBI_BIN.parent)]
     # ACCEPTED RISK (F30): When PATH is absent from os.environ (rare,
     # e.g. minimal containers), the constructed PATH has a trailing colon
     # which POSIX interprets as "search current working directory".

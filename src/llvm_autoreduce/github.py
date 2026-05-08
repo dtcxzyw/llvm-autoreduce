@@ -24,9 +24,10 @@ HEADERS = {
 # retry to have fine-grained control over Retry-After headers.
 def _request(method, url, **kwargs):
     kwargs.setdefault("timeout", 60)
+    headers = {**HEADERS, **kwargs.pop("headers", {})}
     last_exc = None
     for attempt in range(3):
-        resp = requests.request(method, url, headers=HEADERS, **kwargs)
+        resp = requests.request(method, url, headers=headers, **kwargs)
         if resp.status_code in (403, 429):
             retry_after = int(resp.headers.get("Retry-After", 2 ** attempt))
             log.warning("rate-limited (%d), retry in %ds (attempt %d/3)",
