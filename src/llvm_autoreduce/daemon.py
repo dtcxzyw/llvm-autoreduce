@@ -668,7 +668,9 @@ def _generate_report(meta, result, workdir_path, issue_id):
     args = result.get("args", "")
 
     if bug_type == "crash":
-        cmd = f"{tool} {args} {ir_file} -S"
+        cmd = f"{tool} {args} {ir_file}"
+        if tool in ("opt", "llc"):
+            cmd += " -S"
         cmd = " ".join(cmd.split())
         lines.append("```bash")
         lines.append(cmd)
@@ -737,8 +739,12 @@ def reprocess_issue(issue):
     # No mechanical extraction — the AI agents parse everything themselves.
     godbolt_sources = _fetch_godbolt(body)
     _download_attachments(body, wd)
-    for idx, (src, _lang) in enumerate(godbolt_sources, 1):
+    source_index = []
+    for idx, (src, lang) in enumerate(godbolt_sources, 1):
         workdir.write(wd / f"godbolt_{idx}", src)
+        source_index.append({"file": f"godbolt_{idx}", "language": lang})
+    if source_index:
+        workdir.write_json(wd / "sources.json", source_index)
     # Truncate issue body to 10 KB before passing to AI agents.
     if len(body) > 10240:
         log.info("issue=%d body too large (%d bytes), truncating to 10KB", issue_id, len(body))
@@ -993,6 +999,15 @@ def main():
             log.info("found %s at %s", binary, path)
         else:
             missing.append(binary)
+    for oracle_name, oracle_path in (
+        ("alive-tv", config.ALIVE2_BIN),
+        ("llubi_legacy", config.LLUBI_BIN),
+    ):
+        if oracle_path.is_file() and os.access(oracle_path, os.X_OK):
+            log.info("found %s at %s", oracle_name, oracle_path)
+        else:
+            log.warning("%s not found at %s — miscompilation verification will be unavailable",
+                        oracle_name, oracle_path)
     if missing:
         log.critical("required binaries not found: %s", ", ".join(missing))
         sys.exit(1)
