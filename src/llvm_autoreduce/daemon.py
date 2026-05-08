@@ -240,9 +240,16 @@ def _validate_verdict(verdict):
     """Reject review.json with unexpected values to prevent prompt injection."""
     if verdict.get("valid") is not True:
         raise ValueError(f"review.json valid is not True: {verdict.get('valid')!r}")
+    # ACCEPTED RISK: malicious field is mandatory (FINAL DECISION).
+    # If the security reviewer agent fails to include malicious, the
+    # verdict is rejected outright — a missing field indicates the agent
+    # did not complete its analysis and the safest default is to treat
+    # the content as potentially malicious rather than silently passing.
+    # The prompt explicitly requires malicious to be present; validation
+    # enforces it so that a partial agent output cannot open a bypass.
     malicious = verdict.get("malicious")
-    if malicious is not None and not isinstance(malicious, bool):
-        raise ValueError(f"review.json malicious is not bool: {malicious!r}")
+    if not isinstance(malicious, bool):
+        raise ValueError(f"review.json malicious missing or not bool: {malicious!r}")
 
 
 def _validate_meta(meta):
@@ -641,7 +648,7 @@ def _fetch_godbolt_single(short_id):
 
 
 def _fetch_godbolt(body):
-    links = extract.find_godbolt_links(body)
+    links = set(extract.find_godbolt_links(body))
     if not links:
         return []
     sources = []
@@ -817,7 +824,19 @@ def reprocess_issue(issue):
     # transient GitHub API error with an unchanged body.
     wd = workdir.create(issue_id)
 
-    # Step 1: download raw materials (Godbolt sources, attachments, issue body).
+    # Step 1: validate body size before any network operations.
+    # Large bodies waste Godbolt API calls and attachment downloads on
+    # issues that will be immediately rejected. Check early to avoid
+    # unnecessary network traffic.
+    if len(body) > _MAX_BODY_BYTES:
+        log.warning("issue=%d body too large (%d bytes > %d), skip",
+                    issue_id, len(body), _MAX_BODY_BYTES)
+        mark_dropped(issue_id, "body_too_large")
+        mark_processed(issue_id)
+        workdir.cleanup(issue_id)
+        return
+
+    # Step 2: download raw materials (Godbolt sources, attachments, issue body).
     # No mechanical extraction — the AI agents parse everything themselves.
     godbolt_sources = _fetch_godbolt(body)
     _download_attachments(body, wd)
@@ -827,19 +846,6 @@ def reprocess_issue(issue):
         source_index.append({"file": f"godbolt_{idx}", "language": lang})
     if source_index:
         workdir.write_json(wd / "sources.json", source_index)
-    # ACCEPTED RISK: Full issue body is passed to AI agents without truncation.
-    # We trust the agents to handle large bodies — if an agent cannot cope with
-    # the input size, the agent invocation will time out or return non-zero, and
-    # the per-issue error path (mark_dropped + mark_processed) handles it.
-    # Bodies that exceed a generous ceiling are rejected outright instead of
-    # truncated, because truncation can silently drop inline reproducer code blocks.
-    if len(body) > _MAX_BODY_BYTES:
-        log.warning("issue=%d body too large (%d bytes > %d), skip",
-                    issue_id, len(body), _MAX_BODY_BYTES)
-        mark_dropped(issue_id, "body_too_large")
-        mark_processed(issue_id)
-        workdir.cleanup(issue_id)
-        return
     issue_text = f"# Issue #{issue_id}: {title}\n\n{body}"
     workdir.write(wd / "issue.md", issue_text)
 

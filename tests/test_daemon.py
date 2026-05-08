@@ -17,8 +17,9 @@ class TestValidateVerdict:
     def test_malicious_true_ok(self):
         _validate_verdict({"valid": True, "malicious": True})
 
-    def test_malicious_missing_ok(self):
-        _validate_verdict({"valid": True})
+    def test_malicious_missing_raises(self):
+        with pytest.raises(ValueError, match="malicious missing or not bool"):
+            _validate_verdict({"valid": True})
 
     def test_valid_not_true_raises(self):
         with pytest.raises(ValueError, match="valid is not True"):
@@ -29,11 +30,11 @@ class TestValidateVerdict:
             _validate_verdict({})
 
     def test_malicious_non_bool_raises(self):
-        with pytest.raises(ValueError, match="malicious is not bool"):
+        with pytest.raises(ValueError, match="malicious missing or not bool"):
             _validate_verdict({"valid": True, "malicious": 0})
 
     def test_malicious_string_raises(self):
-        with pytest.raises(ValueError, match="malicious is not bool"):
+        with pytest.raises(ValueError, match="malicious missing or not bool"):
             _validate_verdict({"valid": True, "malicious": "no"})
 
 
