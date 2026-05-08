@@ -164,6 +164,7 @@ def mark_processed(issue_id):
     # of a JSON array — a single bad line never loses the rest of the file.
     with open(config.PROCESSED, "a") as f:
         f.write(f"{issue_id}\n")
+        f.flush()
     if _processed_cache is not None:
         _processed_cache.add(str(issue_id))
 
@@ -172,6 +173,7 @@ def mark_dropped(issue_id, reason):
     """Record a dropped issue with timestamp and reason to config.DROPPED."""
     with open(config.DROPPED, "a") as f:
         f.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')}\t{issue_id}\t{reason}\n")
+        f.flush()
 
 
 def is_processed(issue_id):
@@ -355,6 +357,11 @@ def verify_llubi(result, workdir_path):
             log.error("llubi ref failed: %s", ref.stderr[:200])
             return False
 
+        # ACCEPTED RISK (R18): -S flag is placed after the input IR file
+        # for both verify_llubi and verify_alive2. LLVM's cl::opt parser
+        # handles flags position-independently, but this ordering is
+        # non-idiomatic. If a future LLVM version changes to require options
+        # before positional args, the flag would need to be moved.
         opt_out = _run_process(
             [opt_path] + shlex.split(args) + [safe_ir, "-S"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,

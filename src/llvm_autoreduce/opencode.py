@@ -33,6 +33,12 @@ def _env():
     paths = [str(PROJECT_ROOT / "work" / "llvm-trunk" / "build" / "bin"),
              str(PROJECT_ROOT / "work" / "alive2-trunk" / "build" / "bin"),
              str(PROJECT_ROOT / "work" / "llubi-trunk" / "build" / "bin")]
+    # ACCEPTED RISK (F30): When PATH is absent from os.environ (rare,
+    # e.g. minimal containers), the constructed PATH has a trailing colon
+    # which POSIX interprets as "search current working directory".
+    # The cwd is PROJECT_ROOT (controlled by the daemon operator) and
+    # agents already have full bash access (R1/R9), so the incremental
+    # risk is negligible.
     env["PATH"] = ":".join(paths + [os.environ.get("PATH", "")])
     return env
 

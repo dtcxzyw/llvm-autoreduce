@@ -15,6 +15,13 @@ HEADERS = {
 }
 
 
+# ACCEPTED RISK (F31): Retry loop only covers HTTP status codes (403/429/5xx).
+# Connection-level exceptions (DNS, TCP, TLS) from requests.request() are not
+# retried. For fetch_issues() this aborts the round (issues re-fetched next
+# round, no data loss). For individual issue operations the exception is caught
+# by F28 (permanently marks issue processed). Tenacity-based retry is reserved
+# for the Godbolt API (_fetch_godbolt_single); the GitHub client uses manual
+# retry to have fine-grained control over Retry-After headers.
 def _request(method, url, **kwargs):
     kwargs.setdefault("timeout", 60)
     last_exc = None
