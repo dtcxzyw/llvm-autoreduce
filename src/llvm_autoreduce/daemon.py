@@ -15,7 +15,6 @@ import subprocess
 import sys
 import time
 from logging.handlers import TimedRotatingFileHandler
-from pathlib import Path
 
 import requests
 from tenacity import retry, stop_after_attempt, wait_exponential_jitter
@@ -455,6 +454,8 @@ def verify(result, workdir_path, meta):
         return verify_llubi(result, workdir_path)
     if result.get("oracle") == "alive2":
         return verify_alive2(result, workdir_path)
+    log.error("verify: cannot verify result with type=%r oracle=%r",
+              result.get("type"), result.get("oracle"))
     return False
 
 
@@ -527,6 +528,11 @@ def _fetch_godbolt(body):
                 if src.strip():
                     sources.append((src, lang))
         except (requests.RequestException, json.JSONDecodeError):
+            # ACCEPTED RISK (F23): json.JSONDecodeError from Godbolt API is
+            # not retried — only requests.RequestException triggers the
+            # tenacity retry decorator on _fetch_godbolt_single. Malformed
+            # Godbolt JSON responses are extremely rare; when they do occur,
+            # the affected shortlink is silently skipped.
             log.exception("godbolt fetch failed id=%s", short_id)
             failed += 1
     if failed:
@@ -538,20 +544,18 @@ def _download_attachments(body, wd):
     # ACCEPTED RISK (F17): Attachment count is capped at 3 per issue to
     # prevent abuse / resource exhaustion from issues with many attachments.
     # Most LLVM bug reports contain at most 1-2 reproducer attachments.
+    # ACCEPTED RISK (F18): All attachment files are downloaded without
+    # extension filtering and stored under numbered names (attachment1,
+    # attachment2, ...). The extractor agent identifies the actual file
+    # type by reading content, so filename/extension-based filtering is
+    # unnecessary and would silently drop valid reproducers (e.g. .s
+    # assembly attachments that were previously excluded).
     MAX_ATTACHMENTS = 3
-    attach_idx = 0
-    for url, filename in extract.find_attachment_urls(body):
-        if attach_idx >= MAX_ATTACHMENTS:
+    for idx, (url, filename) in enumerate(extract.find_attachment_urls(body), 1):
+        if idx > MAX_ATTACHMENTS:
             log.info("attachment limit (%d) reached, ignoring remaining attachments", MAX_ATTACHMENTS)
             break
-        if not filename.lower().endswith((".ll", ".c", ".cpp", ".cxx")):
-            continue
-        attach_idx += 1
-        ext = Path(filename).suffix
-        if len(ext) > 16:
-            log.warning("attachment extension too long: %r, skipping", ext)
-            continue
-        safe_name = f"attach_{attach_idx}{ext}"
+        safe_name = f"attachment{idx}"
         try:
             github.download_attachment(url, str(wd / safe_name))
             log.info("attachment downloaded: %s", safe_name)
@@ -766,17 +770,6 @@ def reprocess_issue(issue):
     #        bugs requiring multiple .ll files) are not supported and will
     #        silently fail reduction.
     reduce_prompt = read_prompt("reducer.txt")
-    reduce_prompt = reduce_prompt.replace("{issue_file}", "issue.md")
-    reduce_prompt = reduce_prompt.replace("{verdict_type}", meta["bug_type"])
-    reduce_prompt = reduce_prompt.replace(
-        "{reproducer_file}", meta.get("reproducer_file", "repro.ll")
-    )
-    reduce_prompt = reduce_prompt.replace(
-        "{crash_pattern}", meta.get("crash_pattern", "")
-    )
-    reduce_prompt = reduce_prompt.replace(
-        "{pipeline}", meta.get("pipeline", "-passes='default<O2>'")
-    )
     ok = opencode.run(
         agent="reducer",
         workdir=wd,
@@ -891,6 +884,11 @@ def main():
     signal.signal(signal.SIGTERM, _handle_shutdown)
     signal.signal(signal.SIGINT, _handle_shutdown)
     signal.signal(signal.SIGQUIT, _handle_shutdown)
+    # ACCEPTED RISK (F26): SIGHUP triggers shutdown rather than config reload.
+    # Standard daemon practice reserves SIGHUP for config reload, but this
+    # daemon treats SIGHUP identically to SIGTERM/SIGINT as a graceful
+    # shutdown request. Log rotation tools that send SIGHUP will cause the
+    # daemon to exit instead of reloading configuration.
     signal.signal(signal.SIGHUP, _handle_shutdown)
 
     log.info("llvm-autoreduce daemon starting")
@@ -907,6 +905,7 @@ def main():
                     reprocess_issue(issue)
                 except Exception:
                     log.exception("issue=%d unhandled error", issue.get("number", "?"))
+                    log.warning("issue=%d marked as processed due to unhandled exception", issue.get("number", "?"))
                     mark_processed(issue.get("number", "?"))
             log.info("round done")
         except tools.BuildError:

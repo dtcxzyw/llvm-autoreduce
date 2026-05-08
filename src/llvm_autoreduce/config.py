@@ -30,6 +30,9 @@ REVIEW_TIMEOUT = 300
 # The generous ceiling accounts for API latency and verbose LLM reasoning.
 REDUCE_TIMEOUT = 900
 VERIFY_TIMEOUT = 120
+# ACCEPTED RISK (F24): DAEMON_INTERVAL and ISSUES_PER_ROUND are hardcoded.
+# No environment variable override is provided for tuning poll frequency
+# or batch size. For development or testing, modify these constants directly.
 DAEMON_INTERVAL = 1800
 
 ISSUES_PER_ROUND = 20

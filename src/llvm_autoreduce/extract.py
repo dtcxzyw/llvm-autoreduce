@@ -66,23 +66,18 @@ def assemble_reproducers(body, godbolt_sources, attachment_dir):
         name = f"inline_{i + 1}.{ext}"
         sources.append((name, block, lang_tag or ""))
 
-    for i, (_full_url, filename) in enumerate(find_attachment_urls(body), 1):
-        if filename.lower().endswith((".ll", ".c", ".cpp", ".cxx", ".s")):
-            ext = Path(filename).suffix
-            if len(ext) > 16:
-                continue
-            safe_name = f"attach_{i}{ext}"
-            filepath = attachment_dir / safe_name
-            if filepath.exists():
-                try:
-                    content = filepath.read_text()
-                except Exception:
-                    # ACCEPTED RISK (F7): Attachment read failures (encoding
-                    # errors, permission) are silently skipped. The caller
-                    # receives no indication that an attachment was dropped.
-                    # These are rare in practice and individually non-critical.
-                    log.warning("failed to read attachment: %s", safe_name)
-                    continue
-                sources.append((safe_name, content, ""))
+    for f in sorted(attachment_dir.glob("attachment*")):
+        if not f.is_file():
+            continue
+        try:
+            content = f.read_text()
+        except Exception:
+            # ACCEPTED RISK (F7): Attachment read failures (encoding
+            # errors, permission) are silently skipped. The caller
+            # receives no indication that an attachment was dropped.
+            # These are rare in practice and individually non-critical.
+            log.warning("failed to read attachment: %s", f.name)
+            continue
+        sources.append((f.name, content, ""))
 
     return sources

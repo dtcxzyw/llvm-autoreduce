@@ -183,33 +183,37 @@ class TestAssembleReproducers:
 
     def test_attachment_read(self, tmp_path):
         body = "![file](https://githubusercontent.com/x/test.ll)"
-        (tmp_path / "attach_1.ll").write_text("define i32 @main() { ret i32 0 }")
+        (tmp_path / "attachment1").write_text("define i32 @main() { ret i32 0 }")
         sources = assemble_reproducers(body, [], tmp_path)
         assert len(sources) == 1
         name, content, lang = sources[0]
-        assert name == "attach_1.ll"
+        assert name == "attachment1"
         assert "define i32 @main()" in content
 
     def test_attachment_assembly_ext_accepted(self, tmp_path):
         body = "![asm](https://githubusercontent.com/x/code.s)"
-        (tmp_path / "attach_1.s").write_text("mov eax, 1")
+        (tmp_path / "attachment1").write_text("mov eax, 1")
         sources = assemble_reproducers(body, [], tmp_path)
         assert len(sources) == 1
         name, content, lang = sources[0]
-        assert name == "attach_1.s"
+        assert name == "attachment1"
 
-    def test_attachment_non_code_ext_skipped(self, tmp_path):
+    def test_attachment_any_ext_accepted(self, tmp_path):
+        # All attachment files are included regardless of extension —
+        # the extractor agent identifies the actual type by reading content.
         body = "![img](https://githubusercontent.com/x/photo.png)"
+        (tmp_path / "attachment1").write_text("PNG content")
         sources = assemble_reproducers(body, [], tmp_path)
-        assert len(sources) == 0
+        assert len(sources) == 1
+        assert sources[0][0] == "attachment1"
 
     def test_mixed_sources(self, tmp_path):
         body = "```c\nint x;\n```\n![f](https://githubusercontent.com/x/file.ll)"
-        (tmp_path / "attach_1.ll").write_text("define void @h() { ret void }")
+        (tmp_path / "attachment1").write_text("define void @h() { ret void }")
         godbolt = [("void f() {}", "cpp")]
         sources = assemble_reproducers(body, godbolt, tmp_path)
         assert len(sources) == 3
         names = {s[0] for s in sources}
         assert "godbolt_1.cpp" in names
         assert "inline_1.c" in names
-        assert "attach_1.ll" in names
+        assert "attachment1" in names
