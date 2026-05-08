@@ -817,14 +817,15 @@ def reprocess_issue(issue):
         mark_processed(issue_id)
         return
 
-    # ACCEPTED RISK (F11): No label-based pre-filtering — the daemon
-    # processes every open issue regardless of labels (question,
-    # feature-request, documentation, etc.). Non-bug issues go through
-    # security review and extraction before being rejected by
-    # _validate_meta (bug_type not in VALID_BUG_TYPES). Label-based
-    # filtering is unreliable because GitHub label updates are
-    # asynchronous and may not reflect the latest classification at
-    # the time of issue fetch.
+    # ACCEPTED RISK (F11): Label-based pre-filtering is limited to
+    # known non-bug labels (question, feature request, documentation,
+    # duplicate, invalid, wontfix). Issues without any of these labels
+    # — including unlabeled issues — proceed to security review and
+    # extraction. The daemon does not use positive label signals
+    # (miscompilation, crash) to prioritize or include issues. Label-
+    # based filtering is a coarse exclusion mechanism only; GitHub
+    # label updates are asynchronous and a newly mislabeled bug may
+    # be incorrectly skipped until the label is corrected upstream.
 
     # ACCEPTED RISK (F27): When an issue is retried after a failed submission,
     # workdir.create reuses the existing directory (exist_ok=True). Stale files
@@ -1110,7 +1111,18 @@ def main():
     for binary in ["opt", "clang", "llc", "lli", "llvm-reduce"]:
         path = config.LLVM_BIN / binary
         if path.is_file() and os.access(path, os.X_OK):
-            log.info("found %s at %s", binary, path)
+            try:
+                result = subprocess.run(
+                    [str(path), "--version"], capture_output=True, timeout=30,
+                )
+                if result.returncode == 0:
+                    log.info("found %s at %s", binary, path)
+                else:
+                    log.warning("%s at %s exited %d on --version", binary, path, result.returncode)
+            except subprocess.TimeoutExpired:
+                log.warning("%s at %s timed out on --version", binary, path)
+            except OSError:
+                log.warning("%s at %s failed to run --version", binary, path)
         else:
             missing.append(binary)
     for oracle_name, oracle_path in (
@@ -1118,7 +1130,21 @@ def main():
         ("llubi_legacy", config.LLUBI_BIN),
     ):
         if oracle_path.is_file() and os.access(oracle_path, os.X_OK):
-            log.info("found %s at %s", oracle_name, oracle_path)
+            try:
+                result = subprocess.run(
+                    [str(oracle_path), "--version"], capture_output=True, timeout=30,
+                )
+                if result.returncode == 0:
+                    log.info("found %s at %s", oracle_name, oracle_path)
+                else:
+                    log.warning("%s at %s exited %d on --version — miscompilation verification will be unavailable",
+                                oracle_name, oracle_path, result.returncode)
+            except subprocess.TimeoutExpired:
+                log.warning("%s at %s timed out on --version — miscompilation verification will be unavailable",
+                            oracle_name, oracle_path)
+            except OSError:
+                log.warning("%s at %s failed to run --version — miscompilation verification will be unavailable",
+                            oracle_name, oracle_path)
         else:
             log.warning("%s not found at %s — miscompilation verification will be unavailable",
                         oracle_name, oracle_path)
