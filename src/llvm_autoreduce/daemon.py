@@ -61,11 +61,12 @@ def _remove_pidfile():
 def _check_toolchain():
     """Verify critical toolchain binaries exist, are executable, and can run.
 
-    Called after a BuildError in the main loop to detect whether the
-    toolchain was left in a corrupt state that would cause all subsequent
-    reduction rounds to fail silently.
+    Called after a BuildError or build timeout in the main loop to detect
+    whether the toolchain was left in a corrupt state that would cause all
+    subsequent reduction rounds to fail silently.
     """
     missing = []
+    # LLVM core tools — checked against config.LLVM_BIN (built from source).
     for name in ("opt", "llc", "lli", "llvm-reduce", "clang"):
         path = config.LLVM_BIN / name
         if not path.is_file():
@@ -76,6 +77,27 @@ def _check_toolchain():
             try:
                 result = subprocess.run(
                     [str(path), "--version"], capture_output=True, timeout=30,
+                )
+                if result.returncode != 0:
+                    missing.append(f"{name} (exit {result.returncode})")
+            except subprocess.TimeoutExpired:
+                missing.append(f"{name} (timeout)")
+            except OSError:
+                missing.append(f"{name} (failed to run)")
+    # Miscompilation oracles — built alongside LLVM by update-tools.sh.
+    for name, oracle_path in (
+        ("alive-tv", config.ALIVE2_BIN),
+        ("llubi_legacy", config.LLUBI_BIN),
+    ):
+        if not oracle_path.is_file():
+            missing.append(f"{name} (missing)")
+        elif not os.access(oracle_path, os.X_OK):
+            missing.append(f"{name} (not executable)")
+        else:
+            try:
+                result = subprocess.run(
+                    [str(oracle_path), "--version"],
+                    capture_output=True, timeout=30,
                 )
                 if result.returncode != 0:
                     missing.append(f"{name} (exit {result.returncode})")
@@ -483,6 +505,11 @@ def verify_extract_consistency(meta, result, workdir_path):
         log.warning("extract reproducer_file %r not found in workdir", reproducer_file)
         return False
 
+    reference_file = result.get("reference_file", "")
+    if reference_file and not (workdir_path / reference_file).exists():
+        log.warning("result reference_file %r not found in workdir", reference_file)
+        return False
+
     return True
 
 
@@ -598,6 +625,13 @@ def reprocess_issue(issue):
     # asynchronous and may not reflect the latest classification at
     # the time of issue fetch.
 
+    # ACCEPTED RISK (F27): When an issue is retried after a failed submission,
+    # workdir.create reuses the existing directory (exist_ok=True). If the issue
+    # body was edited between daemon rounds to remove attachments, stale
+    # attachment* files from the previous run may persist and be picked up by
+    # assemble_reproducers. This is accepted because issue-body edits between
+    # rounds are extremely rare — the typical retry case is a transient GitHub
+    # API error with an unchanged body.
     wd = workdir.create(issue_id)
 
     # Step 1: extract all reproducers (code blocks, Godbolt, attachments)
@@ -859,6 +893,9 @@ def main():
         sys.exit(1)
 
     # Verify required binaries exist before entering the poll loop.
+    # Oracle binaries (alive-tv, llubi_legacy) are not checked here —
+    # they are built by tools.update_all() in the first loop iteration
+    # and verified by _check_toolchain() on build errors / timeouts.
     missing = []
     for binary in ["opencode", "opt", "clang", "llc", "lli", "llvm-reduce"]:
         path = shutil.which(binary)
@@ -866,15 +903,6 @@ def main():
             missing.append(binary)
         else:
             log.info("found %s at %s", binary, path)
-    for binary in ["llubi_legacy", "alive-tv"]:
-        path = shutil.which(binary) or (
-            config.LLUBI_BIN if binary == "llubi_legacy" and config.LLUBI_BIN.exists() else
-            config.ALIVE2_BIN if binary == "alive-tv" and config.ALIVE2_BIN.exists() else None
-        )
-        if path is not None:
-            log.info("found %s at %s", binary, path)
-        else:
-            log.warning("%s not found on PATH — miscompilation oracles will fail", binary)
     if missing:
         log.critical("required binaries not found on PATH: %s", ", ".join(missing))
         sys.exit(1)
@@ -910,6 +938,9 @@ def main():
             log.info("round done")
         except tools.BuildError:
             log.exception("round failed: toolchain build error")
+            _check_toolchain()
+        except subprocess.TimeoutExpired:
+            log.exception("round failed: toolchain build timeout")
             _check_toolchain()
         except Exception:
             log.exception("round failed")

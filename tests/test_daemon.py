@@ -159,3 +159,19 @@ class TestVerifyExtractConsistency:
         meta = {"bug_type": "crash", "crash_pattern": "err"}
         result = {"type": "crash"}
         assert verify_extract_consistency(meta, result, tmp_path) is True
+
+    def test_reference_file_exists_ok(self, tmp_path):
+        meta = {"bug_type": "miscompilation"}
+        result = {"type": "miscompilation", "oracle": "llubi", "reference_file": "repro.ll"}
+        (tmp_path / "repro.ll").write_text("define void @f() { ret void }")
+        assert verify_extract_consistency(meta, result, tmp_path) is True
+
+    def test_reference_file_missing(self, tmp_path):
+        meta = {"bug_type": "miscompilation"}
+        result = {"type": "miscompilation", "oracle": "llubi", "reference_file": "gone.ll"}
+        assert verify_extract_consistency(meta, result, tmp_path) is False
+
+    def test_reference_file_not_specified_ok(self, tmp_path):
+        meta = {"bug_type": "miscompilation"}
+        result = {"type": "miscompilation", "oracle": "alive2"}
+        assert verify_extract_consistency(meta, result, tmp_path) is True
