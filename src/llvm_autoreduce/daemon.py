@@ -1125,6 +1125,12 @@ def reprocess_issue(issue):
 
 def main():
     setup_logging()
+    # ACCEPTED RISK (F40): Startup validity check is limited to non-empty
+    # string — no API call verifies the token actually authenticates. An
+    # expired, revoked, or wrong-scope token will silently cause all rounds
+    # to fail with "round failed" logs until an operator notices. A
+    # lightweight GET /user probe would detect this at startup cost of
+    # one extra API call per daemon restart.
     if not config.AUTOREDUCE_TOKEN:
         log.critical("AUTOREDUCE_TOKEN environment variable is required")
         sys.exit(1)
@@ -1195,6 +1201,14 @@ def main():
     # shutdown request. Log rotation tools that send SIGHUP will cause the
     # daemon to exit instead of reloading configuration.
     signal.signal(signal.SIGHUP, _handle_shutdown)
+    # ACCEPTED RISK (F41): Shutdown signal responsiveness is coarse — the
+    # daemon only checks _shutdown_requested at round boundaries and during
+    # the inter-round sleep loop (1-second granularity). Within a round the
+    # for-loop over issues does not check the flag, so a SIGTERM received
+    # mid-round must wait for all 20 issues to drain (worst case ~8 h). This
+    # can exceed container orchestration grace periods (K8s default 30 s),
+    # resulting in SIGKILL. Adding a check between issues would reduce the
+    # worst-case delay to one issue (~25 min).
 
     log.info("llvm-autoreduce daemon starting")
 
