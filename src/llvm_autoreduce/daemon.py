@@ -669,6 +669,10 @@ def _fetch_godbolt(body):
     if len(links) > MAX_GODBOLT_LINKS:
         log.info("godbolt link limit (%d) reached, ignoring %d links",
                  MAX_GODBOLT_LINKS, len(links) - MAX_GODBOLT_LINKS)
+        # ACCEPTED RISK: set→list→set slicing has non-deterministic ordering
+        # (Python set iteration depends on hash seed). Most issues have ≤2 Godbolt
+        # links, and each issue is processed exactly once, so ordering variation
+        # across runs has zero practical impact.
         links = set(list(links)[:MAX_GODBOLT_LINKS])
     sources = []
     failed = 0
