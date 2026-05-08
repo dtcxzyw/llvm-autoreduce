@@ -706,6 +706,10 @@ def _generate_report(meta, result, workdir_path, issue_id):
     oracle = result.get("oracle", "")
     if oracle:
         lines.append(f"**Oracle:** {oracle}")
+        if oracle in ("llubi", "alive2"):
+            lines.append("**Scope:** middle-end")
+        elif oracle == "lli":
+            lines.append("**Scope:** backend")
     if crash_pattern:
         lines.append(f"**Crash pattern:** `{crash_pattern}`")
 
