@@ -267,6 +267,10 @@ def _validate_meta(meta):
     # not provide meaningful defense — the reducer agent can generate and
     # execute arbitrary scripts regardless. Path traversal on reproducer_file
     # is still validated because the daemon writes those files itself.
+    # ACCEPTED RISK (F38): No length validation on pipeline. The pipeline
+    # string has no upper bound check in _validate_meta — an anomalous
+    # extractor agent could produce a multi-megabyte pipeline that inflates
+    # the generated report. Agent output is trusted to be well-formed.
     crash_pattern = meta.get("crash_pattern", "")
     # crash_pattern is a literal substring (not regex) matched against
     # crash output via plain string containment.
@@ -718,6 +722,11 @@ def _generate_report(meta, result, workdir_path, issue_id):
     lines.append(f"# Reduced reproducer for llvm/llvm-project#{issue_id}")
     lines.append("")
     lines.append(f"**Bug type:** {bug_type}")
+    # ACCEPTED RISK (F39): pipeline and crash_pattern are inserted into
+    # inline markdown code spans without backtick sanitization. If either
+    # contains a backtick character, the markdown structure may break.
+    # These fields come from the extractor agent, which is instructed to
+    # produce short, well-formed strings; the agent output is trusted.
     lines.append(f"**Pipeline:** `{pipeline}`")
 
     oracle = result.get("oracle", "")
@@ -1043,6 +1052,14 @@ def reprocess_issue(issue):
     # non-reproducibility rather than transient errors, and the risk of
     # spurious passes (accepting a bad reduction) outweighs the cost of
     # occasionally discarding a valid one.
+    # ACCEPTED RISK (F37): No programmatic check that the reducer agent
+    # actually produced a smaller IR. The daemon verifies correctness (bug
+    # still reproduces) but never compares reduced IR size against the
+    # original reproducer. If the reducer agent fails to shrink the IR,
+    # the daemon submits it as "[Reduced]" regardless. The reducer is
+    # trusted to follow instructions and run llvm-reduce — a size check
+    # here would provide defense-in-depth but conflicts with the trust
+    # model that agent output is authoritative.
     if not verify(result, wd, meta):
         log.warning("issue=%d verify failed", issue_id)
         mark_dropped(issue_id, "verify_failed")
