@@ -205,6 +205,8 @@ def _run_process(cmd, **kwargs):
     would avoid the parent-side side-effect but is deprecated in Python 3.11+.
     """
     timeout = kwargs.pop("timeout", None)
+    if kwargs.get("text") and "encoding" not in kwargs:
+        kwargs["encoding"] = "utf-8"
     old = resource.getrlimit(resource.RLIMIT_AS)
     limit = 8 * 1024 ** 3
     try:
@@ -554,15 +556,22 @@ def _fetch_godbolt_single(short_id):
     resp = requests.get(
         f"https://godbolt.org/api/shortlink/{short_id}",
         timeout=30,
+        stream=True,
     )
     resp.raise_for_status()
-    content = resp.content
-    if len(content) > _GODBOLT_MAX_JSON:
-        raise requests.HTTPError(
-            f"Godbolt response too large: {len(content)} bytes (max {_GODBOLT_MAX_JSON})",
-            response=resp,
-        )
-    return resp.json()
+    chunks = []
+    total = 0
+    for chunk in resp.iter_content(chunk_size=8192):
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+        if total > _GODBOLT_MAX_JSON:
+            raise requests.HTTPError(
+                f"Godbolt response too large: exceeds {_GODBOLT_MAX_JSON} bytes",
+                response=resp,
+            )
+    return json.loads(b"".join(chunks))
 
 
 def _fetch_godbolt(body):
@@ -613,6 +622,73 @@ def _download_attachments(body, wd):
             log.info("attachment downloaded: %s", safe_name)
         except (requests.RequestException, OSError):
             log.exception("attachment download failed: %s", filename)
+
+
+def _generate_report(meta, result, workdir_path, issue_id):
+    """Generate reduction report mechanically from verified data.
+
+    Replaces the AI agent-generated report.md with deterministic output
+    built from extract.json, result.json, and the reduced IR file.
+    """
+    bug_type = meta.get("bug_type", "unknown")
+    pipeline = meta.get("pipeline", "")
+    crash_pattern = meta.get("crash_pattern", "")
+
+    ir_file = result["ir_file"]
+    ir_path = _safe_relative(workdir_path, ir_file)
+    try:
+        ir_content = workdir.read(ir_path)
+    except (ValueError, OSError) as e:
+        raise ValueError(f"failed to read reduced IR {ir_file}: {e}") from e
+
+    lines = []
+    lines.append(f"# Reduced reproducer for llvm/llvm-project#{issue_id}")
+    lines.append("")
+    lines.append(f"**Bug type:** {bug_type}")
+    lines.append(f"**Pipeline:** `{pipeline}`")
+
+    oracle = result.get("oracle", "")
+    if oracle:
+        lines.append(f"**Oracle:** {oracle}")
+    if crash_pattern:
+        lines.append(f"**Crash pattern:** `{crash_pattern}`")
+
+    lines.append("")
+    lines.append("## Reduced IR")
+    lines.append("")
+    lines.append("```llvm")
+    lines.append(ir_content)
+    lines.append("```")
+
+    lines.append("")
+    lines.append("## Steps to reproduce")
+    lines.append("")
+
+    tool = result.get("tool", "opt")
+    args = result.get("args", "")
+
+    if bug_type == "crash":
+        cmd = f"{tool} {args} {ir_file} -S"
+        cmd = " ".join(cmd.split())
+        lines.append("```bash")
+        lines.append(cmd)
+        lines.append("```")
+    elif bug_type == "miscompilation":
+        if oracle == "alive2":
+            alive2_args = result.get("alive2_args", "--smt-to=10000")
+            lines.append("```bash")
+            lines.append(f"opt {args} {ir_file} -S | alive-tv --disable-undef-input {alive2_args} {ir_file}")
+            lines.append("```")
+        elif oracle == "llubi":
+            llubi_args = result.get("llubi_args", "--max-steps 1000000")
+            lines.append("```bash")
+            lines.append("# Reference:")
+            lines.append(f"llubi_legacy {llubi_args} {ir_file}")
+            lines.append("# Transformed (incorrect):")
+            lines.append(f"opt {args} {ir_file} -S | llubi_legacy {llubi_args} /dev/stdin")
+            lines.append("```")
+
+    return "\n".join(lines)
 
 
 def reprocess_issue(issue):
@@ -872,15 +948,17 @@ def reprocess_issue(issue):
         return
     log.info("issue=%d verify pass", issue_id)
 
-    # Step 6: submit
-    report_path = wd / "report.md"
-    if not report_path.exists():
-        log.warning("issue=%d report.md missing after reduction", issue_id)
-        mark_dropped(issue_id, "report_md_missing")
+    # Step 6: generate report and submit
+    # Report is generated mechanically from verified data (meta, result, reduced IR)
+    # rather than relying on AI-generated report.md.
+    try:
+        report = _generate_report(meta, result, wd, issue_id)
+    except Exception:
+        log.exception("issue=%d report generation failed", issue_id)
+        mark_dropped(issue_id, "report_generation_failed")
         mark_processed(issue_id)
         workdir.cleanup(issue_id)
         return
-    report = workdir.read(report_path)
     report_title = f"[Reduced] {meta['bug_type']} — #{issue_id}"
     try:
         url = github.create_issue(report_title, report)

@@ -33,11 +33,7 @@ def read(filepath):
     p = Path(filepath)
     if p.stat().st_size > _MAX_READ_BYTES:
         raise ValueError(f"{filepath}: {p.stat().st_size} bytes exceeds read limit {_MAX_READ_BYTES}")
-    try:
-        return p.read_text()
-    except UnicodeDecodeError:
-        log.warning("encoding error in %s, using replacement characters", filepath)
-        return p.read_text(errors="replace")
+    return p.read_text()
 
 
 def read_json(filepath):

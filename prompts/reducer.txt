@@ -6,7 +6,7 @@ Read `extract.json` to get the bug type, primary reproducer file, opt pipeline, 
 3. Capture the IR before that pass
 4. Run llvm-reduce to shrink the IR
 5. Verify the reduced IR still reproduces the bug
-6. Write `result.json` and `report.md`
+6. Write `result.json`
 
 All LLVM tools (opt, clang, llc, lli, llvm-reduce, alive-tv, llubi_legacy) are on PATH. Use bash for all commands.
 

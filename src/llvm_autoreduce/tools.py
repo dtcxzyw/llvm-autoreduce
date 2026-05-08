@@ -21,6 +21,7 @@ def update_all():
         cwd=str(PROJECT_ROOT),
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=1800,
     )
     if proc.returncode == 2:

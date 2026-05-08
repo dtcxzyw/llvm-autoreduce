@@ -1,6 +1,7 @@
 """GitHub API client using AUTOREDUCE_TOKEN authentication."""
 
 import logging
+import os
 import time
 
 import requests
@@ -82,12 +83,23 @@ def get_issue_info(issue_number):
 # time out reduction anyway. Larger attachments from issue bodies should
 # be reduced manually or via a future two-phase reduction pipeline.
 def download_attachment(url, dest_path, max_size=10240):
-    resp = _request("GET", url, headers={"Authorization": f"Bearer {AUTOREDUCE_TOKEN}", "Accept": "application/octet-stream"})
-    content = resp.content
-    if len(content) > max_size:
-        raise requests.HTTPError(f"Attachment too large: {len(content)} bytes (max {max_size})")
+    resp = _request("GET", url,
+        headers={"Authorization": f"Bearer {AUTOREDUCE_TOKEN}", "Accept": "application/octet-stream"},
+        stream=True,
+    )
+    content_length = resp.headers.get("Content-Length")
+    if content_length and int(content_length) > max_size:
+        raise requests.HTTPError(f"Attachment too large: {content_length} bytes (max {max_size})")
+    total = 0
     with open(dest_path, "wb") as f:
-        f.write(content)
+        for chunk in resp.iter_content(chunk_size=8192):
+            if not chunk:
+                break
+            f.write(chunk)
+            total += len(chunk)
+            if total > max_size:
+                os.unlink(dest_path)
+                raise requests.HTTPError(f"Attachment too large: exceeds {max_size} bytes")
 
 
 def create_issue(title, body):
