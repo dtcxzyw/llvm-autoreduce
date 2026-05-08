@@ -256,6 +256,11 @@ def _validate_meta(meta):
     crash_pattern = meta.get("crash_pattern", "")
     # crash_pattern is a literal substring (not regex) matched against
     # crash output via plain string containment.
+    # ACCEPTED RISK: No minimum length validation on crash_pattern.
+    # A single-character pattern would trivially match any crash output
+    # in verify_crash's substring containment check. The extractor agent's
+    # prompt instructs it to produce meaningful literal text fragments;
+    # no code-level lower bound is enforced.
     if crash_pattern and len(crash_pattern) > 2000:
         raise ValueError(f"extract.json crash_pattern too long: {len(crash_pattern)} chars")
 
@@ -280,6 +285,9 @@ def _validate_result(result):
     """
     if "ir_file" not in result:
         raise ValueError("result.json missing required field: ir_file")
+    ir_file = result.get("ir_file", "")
+    if "/" in ir_file or "\\" in ir_file:
+        raise ValueError(f"result.json ir_file contains path separators: {ir_file!r}")
     result_type = result.get("type", "")
     if result_type == "crash":
         tool = result.get("tool", "opt")
@@ -373,6 +381,11 @@ def verify_llubi(result, workdir_path):
         transformed = workdir_path / "__transformed.ll"
         transformed.write_text(opt_out.stdout)
 
+        # ACCEPTED RISK: "__transformed.ll" is passed as a relative
+        # path string (not via _safe_relative). The cwd is set to
+        # workdir_path so relative resolution is correct. The filename
+        # is hardcoded and matches the write path above, so path
+        # traversal cannot occur.
         test = _run_process(
             [str(config.LLUBI_BIN)] + shlex.split(llubi_args) + ["__transformed.ll"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
@@ -424,6 +437,11 @@ def verify_alive2(result, workdir_path):
         transformed = workdir_path / "__transformed.ll"
         transformed.write_text(opt_out.stdout)
 
+        # ACCEPTED RISK: "__transformed.ll" is passed as a relative
+        # path string (not via _safe_relative). The cwd is set to
+        # workdir_path so relative resolution is correct. The filename
+        # is hardcoded and matches the write path above, so path
+        # traversal cannot occur.
         p = _run_process(
             [str(config.ALIVE2_BIN), "--disable-undef-input"]
             + shlex.split(alive2_args) + [safe_ir, "__transformed.ll"],

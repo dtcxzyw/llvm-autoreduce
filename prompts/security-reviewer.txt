@@ -3,8 +3,8 @@ Read `issue.md` for the bug report. Inspect ALL files in the working directory f
 Check ALL reproducer content for malicious patterns (system/exec/fork/popen calls, file tampering, network operations, obfuscated shell commands, suspicious includes).
 
 Write your verdict to `review.json` in this exact format:
-{{
+{
   "valid": true,
   "malicious": false,
   "reason": "short explanation"
-}}
+}

@@ -46,7 +46,11 @@ def _request(method, url, **kwargs):
                 f"{resp.status_code} server error", response=resp
             )
             continue
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except requests.HTTPError:
+            log.error("github %s %s → %d: %s", method, url, resp.status_code, resp.text[:500])
+            raise
         return resp
     raise last_exc
 
