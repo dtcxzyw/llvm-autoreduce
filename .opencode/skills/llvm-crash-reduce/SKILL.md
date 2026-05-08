@@ -32,8 +32,9 @@ opt -opt-bisect-limit=M-1 -passes='<pipeline>' repro.ll -S > before.ll
 ```
 Extract pass name from crash output or bisect log.
 
-### 5. Handle llc/lli crashes
-If crash is in llc or lli (not opt), skip bisect and go directly to llvm-reduce with an interestingness script that runs llc/lli and checks for the crash signature.
+### 5. Handle llc crashes
+If crash is in llc (not opt), skip bisect and go directly to llvm-reduce with an interestingness script that runs llc and checks for the crash signature.
+**Crash in lli is not supported** — the daemon will reject result.json with `tool: "lli"` for crash type.
 
 ### 6. llvm-reduce
 ```bash
@@ -66,20 +67,19 @@ Run the pass on `reduced.ll`, confirm crash signature still matches.
   "ir_file": "reduced.ll"
 }
 ```
+The `args` for opt should be a reduced single pass (e.g. `-passes=licm`, not a full pipeline like `-passes=default<O2>`). This is best effort — if bisect cannot isolate a single pass, use the smallest pipeline possible.
 
-**report.md:**
-```markdown
-## Reduced: crash in `<pass_name>`
-
-### Reproduce
-`opt -passes='<pass_name>' reduced.ll -S`
-
-### Reduced IR
-```llvm
-...contents of reduced.ll...
-```
+**result.json for llc:**
+```json
+{
+  "type": "crash",
+  "tool": "llc",
+  "args": "",
+  "ir_file": "reduced.ll"
+}
 ```
 
 ## Error handling
-- If any step fails, write error to result.json `{"error": "..."}` and to report.md
+- If any step fails, write error to result.json `{"error": "..."}`
+- Do NOT generate a report.md file — the daemon handles report generation
 - CRITICAL: All files stay in current working directory, never /tmp, /home, /etc, /var, or any other system path

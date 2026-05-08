@@ -90,6 +90,10 @@ class TestValidateResult:
         with pytest.raises(ValueError, match="invalid tool"):
             _validate_result({"ir_file": "repro.ll", "type": "crash", "tool": "alive-tv"})
 
+    def test_crash_lli_rejected(self):
+        with pytest.raises(ValueError, match="invalid tool"):
+            _validate_result({"ir_file": "repro.ll", "type": "crash", "tool": "lli"})
+
     def test_miscompilation_llubi_ok(self):
         _validate_result({"ir_file": "repro.ll", "type": "miscompilation", "oracle": "llubi"})
 

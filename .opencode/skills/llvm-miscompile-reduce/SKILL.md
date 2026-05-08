@@ -131,23 +131,9 @@ Then: `chmod +x interestingness.sh && llvm-reduce --test=interestingness.sh befo
 }
 ```
 
-**report.md:**
-```markdown
-## Reduced: miscompilation in `<pass_name>`
-
-**Oracle:** llubi / alive2 / lli
-
-### Reproduce
-`opt -passes='<pass_name>' reduced.ll -S`
-
-### Reduced IR
-```llvm
-...contents of reduced.ll...
-```
-```
-
 ## Error handling
 - Oracle crash on original IR: try the other oracle
 - x86 verification fails: abort, write `{"error": "not x86 reproducible"}` to result.json
-- Write errors to result.json and report.md
+- Write errors to result.json
+- Do NOT generate a report.md file — the daemon handles report generation
 - CRITICAL: All files stay in current working directory, never /tmp, /home, /etc, /var, or any other system path

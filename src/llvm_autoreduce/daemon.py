@@ -293,7 +293,7 @@ def _validate_result(result):
     result_type = result.get("type", "")
     if result_type == "crash":
         tool = result.get("tool", "opt")
-        if tool not in ("opt", "llc", "lli"):
+        if tool not in ("opt", "llc"):
             raise ValueError(f"result.json crash type with invalid tool: {tool!r}")
     elif result_type == "miscompilation":
         oracle = result.get("oracle", "")
@@ -314,7 +314,7 @@ def verify_crash(result, workdir_path, crash_pattern):
     # work/llvm-trunk/build/bin, but the daemon's own verify step must
     # explicitly use the same built binaries to avoid version mismatch.
     tool_name = result.get("tool", "opt")
-    if tool_name not in ("opt", "llc", "lli"):
+    if tool_name not in ("opt", "llc"):
         log.error("verify crash: unknown tool %s", tool_name)
         return False
     tool_path = str(config.LLVM_BIN / tool_name)
