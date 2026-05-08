@@ -144,6 +144,11 @@ def _cleanup_old_workdirs():
 # acceptable for now.
 _processed_cache = None
 
+# Maximum issue body size passed to AI agents (100 KB). Bodies exceeding this
+# are rejected outright — truncation would silently drop inline reproducer
+# code blocks located past the cutoff point.
+_MAX_BODY_BYTES = 102400
+
 
 def _load_processed_cache():
     global _processed_cache
@@ -822,10 +827,19 @@ def reprocess_issue(issue):
         source_index.append({"file": f"godbolt_{idx}", "language": lang})
     if source_index:
         workdir.write_json(wd / "sources.json", source_index)
-    # Truncate issue body to 10 KB before passing to AI agents.
-    if len(body) > 10240:
-        log.info("issue=%d body too large (%d bytes), truncating to 10KB", issue_id, len(body))
-        body = body[:10240]
+    # ACCEPTED RISK: Full issue body is passed to AI agents without truncation.
+    # We trust the agents to handle large bodies — if an agent cannot cope with
+    # the input size, the agent invocation will time out or return non-zero, and
+    # the per-issue error path (mark_dropped + mark_processed) handles it.
+    # Bodies that exceed a generous ceiling are rejected outright instead of
+    # truncated, because truncation can silently drop inline reproducer code blocks.
+    if len(body) > _MAX_BODY_BYTES:
+        log.warning("issue=%d body too large (%d bytes > %d), skip",
+                    issue_id, len(body), _MAX_BODY_BYTES)
+        mark_dropped(issue_id, "body_too_large")
+        mark_processed(issue_id)
+        workdir.cleanup(issue_id)
+        return
     issue_text = f"# Issue #{issue_id}: {title}\n\n{body}"
     workdir.write(wd / "issue.md", issue_text)
 
