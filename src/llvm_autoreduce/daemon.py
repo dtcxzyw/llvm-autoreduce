@@ -274,11 +274,12 @@ def _validate_meta(meta):
     crash_pattern = meta.get("crash_pattern", "")
     # crash_pattern is a literal substring (not regex) matched against
     # crash output via plain string containment.
-    # ACCEPTED RISK: No minimum length validation on crash_pattern.
-    # A single-character pattern would trivially match any crash output
-    # in verify_crash's substring containment check. The extractor agent's
-    # prompt instructs it to produce meaningful literal text fragments;
-    # no code-level lower bound is enforced.
+    # ACCEPTED RISK: No minimum length or character-diversity validation
+    # on crash_pattern. A single-character or all-whitespace pattern would
+    # trivially match any crash output in verify_crash's substring
+    # containment check. The extractor agent's prompt instructs it to
+    # produce meaningful literal text fragments from actual crash output;
+    # the agent is trusted to emit well-formed, non-trivial patterns.
     if crash_pattern and len(crash_pattern) > 2000:
         raise ValueError(f"extract.json crash_pattern too long: {len(crash_pattern)} chars")
 
@@ -397,6 +398,13 @@ def verify_llubi(result, workdir_path):
             log.error("llubi opt failed: %s", opt_out.stderr[:200])
             return False
         transformed = workdir_path / "__transformed.ll"
+        # ACCEPTED RISK: __transformed.ll is written alongside the
+        # per-issue workdir and may persist as a stale artifact if the
+        # daemon is interrupted between verification and workdir cleanup.
+        # This is intentional — on retry (exist_ok=True) the file is
+        # overwritten with fresh content; a stale leftover has no effect
+        # on correctness. Adding explicit cleanup after each verify call
+        # adds churn without preventing any real problem.
         transformed.write_text(opt_out.stdout)
 
         # ACCEPTED RISK: "__transformed.ll" is passed as a relative
@@ -974,6 +982,17 @@ def reprocess_issue(issue):
         return
     log.info("issue=%d extract=%s", issue_id, json.dumps(meta))
 
+    # Handle agent-classified "unrelated" — the extractor may correctly
+    # identify non-LLVM-bug issues (e.g., build errors, documentation
+    # requests miscategorized as bugs). These are explicitly tracked as a
+    # distinct reason rather than lumped into extract_validation_failed.
+    if meta.get("bug_type") == "unrelated":
+        log.warning("issue=%d extract reported bug_type=unrelated, skip", issue_id)
+        mark_dropped(issue_id, "extract_bug_unrelated")
+        mark_processed(issue_id)
+        workdir.cleanup(issue_id)
+        return
+
     try:
         _validate_meta(meta)
     except ValueError:
@@ -1080,6 +1099,12 @@ def reprocess_issue(issue):
         mark_processed(issue_id)
         workdir.cleanup(issue_id)
         return
+    # ACCEPTED RISK: meta['bug_type'] uses direct key access (not .get)
+    # because _validate_meta already guarantees the key is present with a
+    # value in VALID_BUG_TYPES at this point in the pipeline. A future
+    # refactor that calls _generate_report at a different stage must
+    # preserve this invariant. The agent output is trusted to include
+    # bug_type in every valid extract.json.
     report_title = f"[Reduced] {meta['bug_type']} — #{issue_id}"
     try:
         url = github.create_issue(report_title, report)
