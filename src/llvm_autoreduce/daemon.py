@@ -330,7 +330,7 @@ def verify_crash(result, workdir_path, crash_pattern):
     # A malicious or pathological input that fills the pipe could OOM the
     # daemon, but such inputs are caught earlier by the 8 KB reproducer limit
     # and the security review.
-    return crash_pattern in (p.stderr + p.stdout)
+    return p.returncode != 0 and crash_pattern in (p.stderr + p.stdout)
 
 
 # ACCEPTED RISK (R6): verify_llubi compares exact stdout strings
@@ -682,6 +682,11 @@ def reprocess_issue(issue):
     #        and cannot detect these patterns. The extractor agent compiles these
     #        sources with full bash access in the next step. Defense against
     #        compile-time attacks is left to OS-level isolation (Docker).
+    #   (R17) Security reviewer bash:deny enforcement depends entirely on the
+    #        opencode CLI tool honoring the agent config file. The Python daemon
+    #        has no mechanism to pass or verify bash:deny, and does not inspect
+    #        the agent's execution log. If opencode's config handling changes,
+    #        the reviewer silently gains full bash access on untrusted content.
     review_prompt = read_prompt("security-reviewer.txt").format(
         issue_file="issue.md",
         reproducer_file="reproducers.md",
@@ -931,6 +936,11 @@ def main():
             for issue in issues:
                 try:
                     reprocess_issue(issue)
+                # ACCEPTED RISK (F28): Unhandled exceptions from reprocess_issue
+                # permanently mark the issue as processed with no retry. Code
+                # bugs, unexpected API response shapes, or transient edge cases
+                # that escape reprocess_issue's internal error handling cause
+                # silent data loss for that issue number.
                 except Exception:
                     log.exception("issue=%d unhandled error", issue.get("number", "?"))
                     log.warning("issue=%d marked as processed due to unhandled exception", issue.get("number", "?"))

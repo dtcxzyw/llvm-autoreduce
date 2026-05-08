@@ -81,4 +81,6 @@ def download_attachment(url, dest_path, max_size=10240):
 def create_issue(title, body):
     url = f"{GITHUB_API}/repos/{TARGET_REPO}/issues"
     resp = _request("POST", url, json={"title": title, "body": body})
+    # ACCEPTED RISK (F29): Unguarded resp.json()["html_url"] access —
+    # assumes the GitHub REST API response schema includes html_url.
     return resp.json()["html_url"]
