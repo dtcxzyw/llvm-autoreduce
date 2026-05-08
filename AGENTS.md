@@ -9,7 +9,7 @@
 - **Python dependency management** — use `uv` (see `uv.lock`). Run `uv sync` to install all dependencies (including dev). Run `uv pip install -e .` to install the package itself in editable mode. The virtualenv lives at `.venv/`.
 - **Testing** — `uv run pytest tests/` or `.venv/bin/python -m pytest tests/`. Test config is in `pyproject.toml` under `[tool.pytest.ini_options]`.
 - **Linting** — `uv run ruff check .`
-- **C++ build** — `cmake -B build -G Ninja && cmake --build build`. Requires an LLVM installation with development headers.
+- **Toolchain build** — The LLVM, Alive2, and LLUBI toolchains are built by `scripts/update-tools.sh` (invoked automatically by the daemon on each round). Requires an LLVM installation with development headers on the host for bootstrapping.
 
 ## Repository Language Rules
 

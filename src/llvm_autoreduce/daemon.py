@@ -359,6 +359,13 @@ def verify_crash(result, workdir_path, crash_pattern):
     # A malicious or pathological input that fills the pipe could OOM the
     # daemon, but such inputs are caught earlier by the 8 KB reproducer limit
     # and the security review.
+    # ACCEPTED RISK (F43): p.returncode != 0 treats any non-zero exit as
+    # a crash signal. LLVM tools may exit non-zero for non-crash reasons
+    # (e.g. exec failure, resource exhaustion, I/O error). If such an
+    # error message happens to contain the crash_pattern substring, the
+    # verify step returns a false positive. In practice crash_pattern is
+    # a specific fragment from an actual crash trace (e.g. "failed at
+    # LICM.cpp"), making coincidental matches extremely unlikely.
     return p.returncode != 0 and crash_pattern in (p.stderr + p.stdout)
 
 
@@ -777,6 +784,13 @@ def _generate_report(meta, result, workdir_path, issue_id):
     tool = result.get("tool", "opt")
     args = result.get("args", "")
 
+    # ACCEPTED RISK (F44): The bash command in the reproduction steps
+    # is built by naive string concatenation (tool + args + ir_file)
+    # rather than by reconstructing from shlex.split(args) as the verify
+    # step uses. This means the reported command may not be structurally
+    # identical to what was actually executed (e.g. quoted arguments
+    # appear differently). The command is for human reference only and
+    # the reported result has passed mechanical verification.
     if bug_type == "crash":
         cmd = f"{tool} {args} {ir_file}"
         cmd = " ".join(cmd.split())
@@ -1258,6 +1272,15 @@ def main():
         # but would require external supervision (systemd restart) to recover if
         # the build failure is transient (e.g. OOM). The current behavior of
         # logging and continuing is accepted — the operator must monitor logs.
+        # ACCEPTED RISK (F45): _check_toolchain return value is not used
+        # here — the daemon continues the poll loop regardless of whether
+        # the health check passes or fails. A permanently corrupted
+        # toolchain (e.g. stale broken shared library, accidentally
+        # deleted binary) will be detected and logged critically by
+        # _check_toolchain, but the daemon stays alive so the operator
+        # can notice the log and intervene. Exiting the process would
+        # require external supervision (systemd) to restart, which is a
+        # deployment concern outside this daemon's scope.
         except tools.BuildError:
             log.exception("round failed: toolchain build error")
             _check_toolchain()

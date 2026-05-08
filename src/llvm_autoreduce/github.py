@@ -37,6 +37,11 @@ def _request(method, url, **kwargs):
     last_exc = None
     for attempt in range(3):
         resp = requests.request(method, url, headers=headers, **kwargs)
+        # ACCEPTED RISK (F46): HTTP 403 (forbidden) uses the same retry
+        # policy as 429 (rate-limit). A 403 from GitHub typically means
+        # an expired or revoked token, which retries cannot fix. The
+        # wasted ~14 seconds per round is negligible in a 30-minute poll
+        # cycle, and the operator will see the 403 in daemon logs.
         if resp.status_code in (403, 429):
             retry_after = int(resp.headers.get("Retry-After", 2 ** attempt))
             log.warning("rate-limited (%d), retry in %ds (attempt %d/3)",

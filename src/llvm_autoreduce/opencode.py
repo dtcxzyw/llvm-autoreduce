@@ -24,6 +24,12 @@ def _env():
     # still discover it via ~ or getent, but we should not hand it to
     # them as an env-var convenience.
     env = {}
+    # ACCEPTED RISK (F42): SHELL is passed through to subprocess agents
+    # alongside USER/PATH/TERM. The security-reviewer agent has bash: deny
+    # and does not need SHELL, but the shared env construction does not
+    # differentiate between agent types. The incremental exposure surface
+    # is negligible given that the other agents (extractor, reducer) have
+    # full bash access anyway (R1, R9).
     for key in ("USER", "PATH", "TERM", "SHELL", "LANG", "LC_ALL"):
         if key in os.environ:
             env[key] = os.environ[key]

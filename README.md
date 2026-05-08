@@ -5,9 +5,9 @@ Automated LLVM bug reproducer reduction tool. Watches the [llvm/llvm-project](ht
 ## Pipeline
 
 1. **Fetch** open issues from llvm/llvm-project
-2. **Extract** reproducers from code blocks, Godbolt links, and attachments
+2. **Download** Godbolt sources, attachments, and issue body
 3. **Security review** — AI agent screens reproducer content for malicious patterns
-4. **Classify** bug type (crash / miscompilation) and capture crash signature
+4. **Extract & classify** — bug type (crash / miscompilation), crash signature, and pipeline
 5. **Reduce** — opt-bisect-limit binary search to find the crashing pass, then llvm-reduce to shrink IR
 6. **Verify** the reduced IR still reproduces the bug
 7. **Submit** result to the target repository
