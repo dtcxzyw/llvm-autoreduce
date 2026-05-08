@@ -10,6 +10,14 @@ from .config import AUTOREDUCE_TOKEN, GITHUB_API, ISSUES_PER_ROUND, SOURCE_REPO,
 
 log = logging.getLogger(__name__)
 
+# ACCEPTED RISK (F36): HEADERS is a module-level constant containing the
+# AUTOREDUCE_TOKEN Bearer token. Any code that logs or prints HEADERS
+# (e.g. debug instrumentation) will leak the token into daemon.log.
+# Mitigation: the token is scoped to repo-only and can be rotated via
+# GitHub settings. Keeping HEADERS as a module constant simplifies
+# the request path; a per-request function would add indirection
+# with negligible security gain given that the token is already
+# in the process's environment variable space.
 HEADERS = {
     "Authorization": f"Bearer {AUTOREDUCE_TOKEN}",
     "Accept": "application/vnd.github.v3+json",

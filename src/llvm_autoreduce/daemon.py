@@ -583,6 +583,11 @@ def verify_extract_consistency(meta, result, workdir_path):
     if bug_type == "miscompilation" and crash_pattern:
         log.warning("extract bug_type=miscompilation but crash_pattern is non-empty, ignoring crash_pattern")
 
+    ir_file = result.get("ir_file", "")
+    if ir_file and not (workdir_path / ir_file).exists():
+        log.warning("result ir_file %r not found in workdir", ir_file)
+        return False
+
     reproducer_file = meta.get("reproducer_file", "")
     if reproducer_file and not (workdir_path / reproducer_file).exists():
         log.warning("extract reproducer_file %r not found in workdir", reproducer_file)
@@ -1119,8 +1124,27 @@ def main():
                 try:
                     reprocess_issue(issue)
                 except Exception:
-                    log.exception("issue=%d unhandled error (will retry next round)", issue.get("number", "?"))
+                    # ACCEPTED RISK (F35): Outer per-issue exceptions are terminal —
+                    # mark_processed and never retry. This is the FINAL design decision.
+                    # Every exception path that escapes reprocess_issue (e.g. bug in the
+                    # daemon itself triggered by a specific issue's data) permanently
+                    # skips that issue. The alternative of retrying indefinitely (as was
+                    # done before F35) wastes resources on fundamentally unprocessable
+                    # issues with no hope of eventual success. Breaking buggy issues are
+                    # extremely rare and the cost of occasionally losing one is negligible
+                    # compared to infinite retry loops.
+                    issue_id = issue.get("number", "?")
+                    log.exception("issue=%s unhandled error, permanently skipping", issue_id)
+                    mark_dropped(issue_id, "unhandled_exception")
+                    mark_processed(issue_id)
             log.info("round done")
+        # ACCEPTED RISK (F34): Non-rollback BuildError (exit code != 0, 2) means
+        # the known-good toolchain also fails to build. The daemon continues running
+        # but all issues in this and subsequent rounds will fail silently because
+        # the toolchain is unusable. A full daemon exit would be more appropriate
+        # but would require external supervision (systemd restart) to recover if
+        # the build failure is transient (e.g. OOM). The current behavior of
+        # logging and continuing is accepted — the operator must monitor logs.
         except tools.BuildError:
             log.exception("round failed: toolchain build error")
             _check_toolchain()
