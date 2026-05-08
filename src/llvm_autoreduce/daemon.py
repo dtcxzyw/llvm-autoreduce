@@ -716,6 +716,11 @@ def _generate_report(meta, result, workdir_path, issue_id):
     lines.append("")
     lines.append("## Reduced IR")
     lines.append("")
+    # ACCEPTED RISK: Reduced IR content is inserted verbatim into a markdown
+    # code fence. If the IR contains triple backticks the code block may break.
+    # The IR is agent-generated from llvm-reduce output — the agent is trusted
+    # to produce well-formed, benign content, and in practice reduced IR rarely
+    # contains backtick sequences that would corrupt the markdown structure.
     lines.append("```llvm")
     lines.append(ir_content)
     lines.append("```")
@@ -729,8 +734,6 @@ def _generate_report(meta, result, workdir_path, issue_id):
 
     if bug_type == "crash":
         cmd = f"{tool} {args} {ir_file}"
-        if tool in ("opt", "llc"):
-            cmd += " -S"
         cmd = " ".join(cmd.split())
         lines.append("```bash")
         lines.append(cmd)
@@ -739,7 +742,7 @@ def _generate_report(meta, result, workdir_path, issue_id):
         if oracle == "alive2":
             alive2_args = result.get("alive2_args", "--smt-to=10000")
             lines.append("```bash")
-            lines.append(f"opt {args} {ir_file} -S | alive-tv --disable-undef-input {alive2_args} {ir_file}")
+            lines.append(f"opt {args} {ir_file} -S > __reduced_opt.ll && alive-tv --disable-undef-input {alive2_args} {ir_file} __reduced_opt.ll")
             lines.append("```")
         elif oracle == "llubi":
             llubi_args = result.get("llubi_args", "--max-steps 1000000")
