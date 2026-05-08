@@ -297,7 +297,7 @@ def _validate_result(result):
             raise ValueError(f"result.json crash type with invalid tool: {tool!r}")
     elif result_type == "miscompilation":
         oracle = result.get("oracle", "")
-        if oracle not in ("llubi", "alive2"):
+        if oracle not in ("llubi", "alive2", "lli"):
             raise ValueError(f"result.json miscompilation type with unknown oracle: {oracle!r}")
         reference = result.get("reference_file", "")
         if reference and ("/" in reference or "\\" in reference):
@@ -487,6 +487,60 @@ def verify_alive2(result, workdir_path):
         return False
 
 
+# ACCEPTED RISK (R19): verify_lli compares stdout strings from
+# llubi_legacy (reference interpreter) and lli (JIT/backend-native
+# execution) to detect backend miscompilation. Non-deterministic output
+# (timestamps, metadata, randomization) may cause false positives.
+def verify_lli(result, workdir_path):
+    safe_ir = _safe_relative(workdir_path, result["ir_file"])
+    args = result.get("args", "")
+    # ACCEPTED RISK (R7): lli_args from result.json may inject arguments
+    # into lli. The reducer agent already has unrestricted bash access
+    # within the workdir.
+    lli_args = result.get("lli_args", "")
+    llubi_args = result.get("llubi_args", "--max-steps 1000000")
+    opt_path = str(config.LLVM_BIN / "opt")
+    lli_path = str(config.LLVM_BIN / "lli")
+    try:
+        ref = _run_process(
+            [str(config.LLUBI_BIN)] + shlex.split(llubi_args) + [safe_ir],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
+        )
+        if ref.returncode != 0:
+            log.error("lli verify: llubi ref failed: %s", ref.stderr[:200])
+            return False
+
+        opt_out = _run_process(
+            [opt_path] + shlex.split(args) + [safe_ir, "-S"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
+        )
+        if opt_out.returncode != 0:
+            log.error("lli verify: opt failed: %s", opt_out.stderr[:200])
+            return False
+        transformed = workdir_path / "__transformed.ll"
+        transformed.write_text(opt_out.stdout)
+
+        test = _run_process(
+            [lli_path] + shlex.split(lli_args) + ["__transformed.ll"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
+        )
+        if test.returncode != 0:
+            log.error("lli verify: lli test failed: signal=%d stderr=%s",
+                      -test.returncode if test.returncode < 0 else test.returncode,
+                      test.stderr[:200])
+            return False
+        return ref.stdout != test.stdout
+    except subprocess.TimeoutExpired:
+        log.error("verify lli timeout")
+        return False
+    except OSError:
+        log.exception("verify lli os error")
+        return False
+
+
 # The daemon trusts the oracle choice made by the reducer agent inside
 # result.json. It does not independently select or fallback between
 # llubi_legacy and alive-tv — the reducer agent has full context about
@@ -503,6 +557,8 @@ def verify(result, workdir_path, meta):
         return verify_llubi(result, workdir_path)
     if result.get("oracle") == "alive2":
         return verify_alive2(result, workdir_path)
+    if result.get("oracle") == "lli":
+        return verify_lli(result, workdir_path)
     log.error("verify: cannot verify result with type=%r oracle=%r",
               result.get("type"), result.get("oracle"))
     return False
@@ -688,6 +744,15 @@ def _generate_report(meta, result, workdir_path, issue_id):
             lines.append(f"llubi_legacy {llubi_args} {ir_file}")
             lines.append("# Transformed (incorrect):")
             lines.append(f"opt {args} {ir_file} -S | llubi_legacy {llubi_args} /dev/stdin")
+            lines.append("```")
+        elif oracle == "lli":
+            lli_args = result.get("lli_args", "")
+            llubi_args = result.get("llubi_args", "--max-steps 1000000")
+            lines.append("```bash")
+            lines.append("# Reference:")
+            lines.append(f"llubi_legacy {llubi_args} {ir_file}")
+            lines.append("# Transformed (incorrect, via backend):")
+            lines.append(f"opt {args} {ir_file} -S | lli {lli_args} /dev/stdin")
             lines.append("```")
 
     return "\n".join(lines)

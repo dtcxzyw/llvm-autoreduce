@@ -96,6 +96,9 @@ class TestValidateResult:
     def test_miscompilation_alive2_ok(self):
         _validate_result({"ir_file": "repro.ll", "type": "miscompilation", "oracle": "alive2"})
 
+    def test_miscompilation_lli_ok(self):
+        _validate_result({"ir_file": "repro.ll", "type": "miscompilation", "oracle": "lli"})
+
     def test_miscompilation_missing_oracle_raises(self):
         with pytest.raises(ValueError, match="unknown oracle"):
             _validate_result({"ir_file": "repro.ll", "type": "miscompilation"})
