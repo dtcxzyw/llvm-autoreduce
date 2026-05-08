@@ -95,6 +95,15 @@ def get_issue_info(issue_number):
 # that exceed this size are almost certainly not yet reduced and would
 # time out reduction anyway. Larger attachments from issue bodies should
 # be reduced manually or via a future two-phase reduction pipeline.
+# ACCEPTED RISK (F51): Bearer token is sent to githubusercontent.com
+# (GitHub's raw content CDN) alongside api.github.com requests because
+# _request() unconditionally attaches the Authorization header. The CDN
+# does not require authentication, but sending a scoped token is
+# necessary to avoid GitHub's rate limiting on unauthenticated CDN
+# requests. Without the token, concurrent download_attachment calls
+# from the daemon and other automation on the same IP may hit 429
+# responses, causing permanent issue loss (F28). The token scope is
+# repo-only (public_repo).
 def download_attachment(url, dest_path, max_size=10240):
     resp = _request("GET", url,
         headers={"Authorization": f"Bearer {AUTOREDUCE_TOKEN}", "Accept": "application/octet-stream"},

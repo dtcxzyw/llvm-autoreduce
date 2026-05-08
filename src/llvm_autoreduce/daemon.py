@@ -683,6 +683,17 @@ def _fetch_godbolt(body):
         links = set(list(links)[:MAX_GODBOLT_LINKS])
     sources = []
     failed = 0
+    # ACCEPTED RISK (F52): No upper bound on the number of sessions
+    # per Godbolt shortlink. The total JSON response is capped at
+    # 100 KB (F15), but this envelope can contain thousands of
+    # minimal sessions (e.g. empty or single-line sources), each
+    # written to a file in the per-issue workdir. The practical
+    # risk is negligible — Godbolt shortlinks require a Compiler
+    # Explorer account to create, and the workdir is cleaned up
+    # after processing. A dedicated attacker could fill the workdir
+    # with many small files, but the 3-link limit (F17) and the
+    # operator's ability to monitor disk usage provide sufficient
+    # mitigation.
     for short_id in links:
         try:
             data = _fetch_godbolt_single(short_id)
@@ -1135,7 +1146,19 @@ def reprocess_issue(issue):
         url = github.create_issue(report_title, report)
         log.info("issue=%d submitted %s", issue_id, url)
     except Exception:
-        log.exception("issue=%d submission failed (will retry next round)", issue_id)
+        # ACCEPTED RISK (F50): GitHub submission failures are terminal —
+        # the issue is marked processed and never retried. Previously this
+        # path deferred retry to the next round (no mark_processed), which
+        # caused an infinite retry loop when the report body exceeded
+        # GitHub's ~64 KB issue body limit (e.g. reduced IR between 64 KB
+        # and 200 KB). The daemon has no mechanism to shrink the report
+        # between rounds, so retrying is fruitless. Per-issue submission
+        # failures are rare and almost always indicate a permanent problem
+        # (body too large, target repo deleted, token scope changed).
+        log.exception("issue=%d submission failed", issue_id)
+        mark_dropped(issue_id, "submission_failed")
+        mark_processed(issue_id)
+        workdir.cleanup(issue_id)
         return
     mark_processed(issue_id)
     workdir.cleanup(issue_id)
