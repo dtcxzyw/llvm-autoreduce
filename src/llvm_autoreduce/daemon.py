@@ -663,6 +663,13 @@ def _fetch_godbolt(body):
     links = set(extract.find_godbolt_links(body))
     if not links:
         return []
+    # ACCEPTED RISK: Godbolt shortlink count is capped at 3 per issue to
+    # prevent abuse / resource exhaustion — same rationale as MAX_ATTACHMENTS.
+    MAX_GODBOLT_LINKS = 3
+    if len(links) > MAX_GODBOLT_LINKS:
+        log.info("godbolt link limit (%d) reached, ignoring %d links",
+                 MAX_GODBOLT_LINKS, len(links) - MAX_GODBOLT_LINKS)
+        links = set(list(links)[:MAX_GODBOLT_LINKS])
     sources = []
     failed = 0
     for short_id in links:
