@@ -28,6 +28,14 @@ class TestValidateVerdict:
         with pytest.raises(ValueError, match="valid is not True"):
             _validate_verdict({})
 
+    def test_malicious_non_bool_raises(self):
+        with pytest.raises(ValueError, match="malicious is not bool"):
+            _validate_verdict({"valid": True, "malicious": 0})
+
+    def test_malicious_string_raises(self):
+        with pytest.raises(ValueError, match="malicious is not bool"):
+            _validate_verdict({"valid": True, "malicious": "no"})
+
 
 class TestValidateMeta:
     def test_clean_meta_ok(self):
@@ -123,6 +131,10 @@ class TestValidateResult:
     def test_missing_ir_file_raises(self):
         with pytest.raises(ValueError, match="ir_file"):
             _validate_result({"type": "crash"})
+
+    def test_empty_ir_file_raises(self):
+        with pytest.raises(ValueError, match="ir_file is empty"):
+            _validate_result({"ir_file": "", "type": "crash"})
 
     def test_unknown_type_raises(self):
         with pytest.raises(ValueError, match="unknown type"):

@@ -19,16 +19,32 @@ def create(issue_id):
     return path
 
 
+# ACCEPTED RISK (F33): read and read_json enforce per-call size caps to prevent
+# the daemon process from OOM-ing on unexpectedly large agent-generated files.
+# The caps are intentionally generous for structured outputs; report.md (the
+# largest expected output — containing reduced IR) is capped at 200 KB, while
+# JSON metadata files are capped at 100 KB. Exceeding these limits indicates
+# an anomalous agent output and is treated as a fatal error for the issue.
+_MAX_READ_BYTES = 204800
+_MAX_JSON_BYTES = 102400
+
+
 def read(filepath):
+    p = Path(filepath)
+    if p.stat().st_size > _MAX_READ_BYTES:
+        raise ValueError(f"{filepath}: {p.stat().st_size} bytes exceeds read limit {_MAX_READ_BYTES}")
     try:
-        return Path(filepath).read_text()
+        return p.read_text()
     except UnicodeDecodeError:
         log.warning("encoding error in %s, using replacement characters", filepath)
-        return Path(filepath).read_text(errors="replace")
+        return p.read_text(errors="replace")
 
 
 def read_json(filepath):
-    return json.loads(Path(filepath).read_text())
+    p = Path(filepath)
+    if p.stat().st_size > _MAX_JSON_BYTES:
+        raise ValueError(f"{filepath}: {p.stat().st_size} bytes exceeds json read limit {_MAX_JSON_BYTES}")
+    return json.loads(p.read_text())
 
 
 def write(filepath, content):

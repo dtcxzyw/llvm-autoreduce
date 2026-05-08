@@ -51,6 +51,32 @@ class TestReadWrite:
         write(f, "second")
         assert read(f) == "second"
 
+    def test_read_exceeds_limit_raises(self, monkeypatch, tmp_path):
+        monkeypatch.setattr("llvm_autoreduce.workdir._MAX_READ_BYTES", 10)
+        f = tmp_path / "big.txt"
+        f.write_text("x" * 100)
+        with pytest.raises(ValueError, match="exceeds read limit"):
+            read(f)
+
+    def test_read_json_exceeds_limit_raises(self, monkeypatch, tmp_path):
+        monkeypatch.setattr("llvm_autoreduce.workdir._MAX_JSON_BYTES", 10)
+        f = tmp_path / "big.json"
+        f.write_text("x" * 100)
+        with pytest.raises(ValueError, match="exceeds json read limit"):
+            read_json(f)
+
+    def test_read_at_limit_ok(self, monkeypatch, tmp_path):
+        monkeypatch.setattr("llvm_autoreduce.workdir._MAX_READ_BYTES", 100)
+        f = tmp_path / "ok.txt"
+        f.write_text("x" * 100)
+        assert read(f) == "x" * 100
+
+    def test_read_json_at_limit_ok(self, monkeypatch, tmp_path):
+        monkeypatch.setattr("llvm_autoreduce.workdir._MAX_JSON_BYTES", 100)
+        f = tmp_path / "ok.json"
+        f.write_text("{}")
+        assert read_json(f) == {}
+
 
 class TestCleanup:
     def test_removes_directory(self, monkeypatch, tmp_path):

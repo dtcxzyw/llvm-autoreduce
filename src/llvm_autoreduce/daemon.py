@@ -234,7 +234,7 @@ def _validate_verdict(verdict):
     if verdict.get("valid") is not True:
         raise ValueError(f"review.json valid is not True: {verdict.get('valid')!r}")
     malicious = verdict.get("malicious")
-    if malicious is not None and malicious not in (True, False):
+    if malicious is not None and not isinstance(malicious, bool):
         raise ValueError(f"review.json malicious is not bool: {malicious!r}")
 
 
@@ -286,8 +286,8 @@ def _validate_result(result):
     if "ir_file" not in result:
         raise ValueError("result.json missing required field: ir_file")
     ir_file = result.get("ir_file", "")
-    if "/" in ir_file or "\\" in ir_file:
-        raise ValueError(f"result.json ir_file contains path separators: {ir_file!r}")
+    if not ir_file or "/" in ir_file or "\\" in ir_file:
+        raise ValueError(f"result.json ir_file is empty or contains path separators: {ir_file!r}")
     result_type = result.get("type", "")
     if result_type == "crash":
         tool = result.get("tool", "opt")
@@ -940,6 +940,16 @@ def main():
             _cleanup_old_workdirs()
             issues = github.fetch_issues()
             log.info("round fetched %d issues", len(issues))
+            # ACCEPTED RISK (F32): Per-issue errors are NOT retried within reprocess_issue
+            # by design — every pipeline stage failure (agent timeout, JSON parse, verify
+            # mismatch) calls mark_processed() to permanently skip the issue. Only
+            # GitHub API network errors inside github.create_issue() avoid mark_processed
+            # and allow a natural retry on the next round. The per-issue exception handler
+            # below similarly logs and continues without mark_processed, permitting a future
+            # round to re-attempt. This is the final design decision: transient
+            # infrastructure outages that affect all issues in a round are an accepted
+            # operational trade-off; they naturally sort out on the next poll cycle.
+            # Do not re-audit this pattern.
             for issue in issues:
                 try:
                     reprocess_issue(issue)
