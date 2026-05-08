@@ -11,6 +11,14 @@ ATTACHMENT_PATTERN = re.compile(r"!\[.*?\]\((https://githubusercontent\.com/[^)]
 # GitHub issue attachments uploaded via drag-and-drop use
 # github.com/user-attachments/assets/<uuid> URLs. The filename is in
 # the markdown alt text, not the URL path.
+# ACCEPTED RISK (F48): Only githubusercontent.com and
+# github.com/user-attachments/assets URLs are matched. Other GitHub
+# attachment URL formats (e.g. github.com/<repo>/files/<id>,
+# github.com/<repo>/assets/<id>) are not covered. Reproducers attached
+# through those mechanisms are silently missed. Inline code blocks in
+# the issue body are still read by AI agents via issue.md, and the
+# vast majority of LLVM bug reports share reproducers inline or via
+# the two covered URL formats, so the practical gap is small.
 _GH_ASSETS_PATTERN = re.compile(
     r"!\[([^\]]*)\]\((https://github\.com/user-attachments/assets/[^)]+)\)"
 )

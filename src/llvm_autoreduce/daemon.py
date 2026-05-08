@@ -1234,6 +1234,22 @@ def main():
         try:
             log.info("round start")
             tools.update_all()
+            # ACCEPTED RISK (F47): Toolchain health check runs once per round
+            # before issue processing. If the build succeeded (exit 0) but
+            # produced a broken toolchain (stale shared libs, corrupt binaries),
+            # this check catches it before all 20 issues are silently lost.
+            # A failed health check aborts the round — the daemon stays alive
+            # per F34/F45 so the operator can intervene. This is the FINAL
+            # decision: the health check is the last line of defense against
+            # systemic data loss from a silently-broken toolchain.
+            if not _check_toolchain():
+                log.critical("toolchain health check failed after update, aborting round")
+                if _shutdown_requested:
+                    break
+                deadline = time.time() + config.DAEMON_INTERVAL
+                while time.time() < deadline and not _shutdown_requested:
+                    time.sleep(1)
+                continue
             _cleanup_old_workdirs()
             issues = github.fetch_issues()
             log.info("round fetched %d issues", len(issues))

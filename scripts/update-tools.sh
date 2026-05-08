@@ -108,7 +108,17 @@ JSONEOF
 }
 
 # ---- clone if missing ----
-
+# ACCEPTED RISK (F49): Repositories are cloned and always built from the
+# latest origin/main (or origin/master) HEAD. There is no commit hash
+# pinning, GPG signature verification, or version-lock mechanism. The
+# .known-good file stores hashes only for local rollback on build failure,
+# not as a trust anchor. If any upstream repository (llvm-project, alive2,
+# llvm-ub-aware-interpreter) is compromised, malicious code enters the
+# toolchain and is executed by both the daemon's subprocess calls and the
+# AI agents' unrestricted bash access. The dockerized runtime and operator
+# trust in upstream maintainers are the sole mitigations. This is the
+# FINAL design decision — automatic updates are preferred over version
+# locking.
 if [ ! -d "$WORK_DIR/llvm-trunk/.git" ]; then
     echo "CLONE: llvm-project"
     git clone https://github.com/llvm/llvm-project "$WORK_DIR/llvm-trunk"
