@@ -6,7 +6,7 @@ import os
 import resource
 import subprocess
 
-from .config import ALIVE2_BIN, LLUBI_BIN, LLVM_BIN, PROJECT_ROOT
+from .config import ALIVE2_BIN, LLUBI_BIN, LLVM_BIN
 
 log = logging.getLogger(__name__)
 
@@ -72,8 +72,7 @@ def run(agent, workdir, prompt, timeout):
         "opencode",
         "--model", "deepseek/deepseek-v4-pro",
         "--agent", agent,
-        "--workdir", str(workdir),
-        "-p", prompt,
+        "--prompt", prompt,
     ]
 
     # Pre-set RLIMIT_AS=8GB before fork so child inherits it; restore parent
@@ -92,7 +91,7 @@ def run(agent, workdir, prompt, timeout):
         with open(log_path, "w") as f:
             proc = subprocess.Popen(
                 cmd,
-                cwd=str(PROJECT_ROOT),
+                cwd=str(workdir),
                 env=_env(),
                 stdout=f,
                 stderr=subprocess.STDOUT,

@@ -675,7 +675,7 @@ _GODBOLT_MAX_JSON = 102400
 )
 def _fetch_godbolt_single(short_id):
     resp = requests.get(
-        f"https://godbolt.org/api/shortlink/{short_id}",
+        f"https://godbolt.org/api/shortlinkinfo/{short_id}",
         timeout=30,
         stream=True,
     )
