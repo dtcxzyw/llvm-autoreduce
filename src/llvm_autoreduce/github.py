@@ -106,7 +106,7 @@ def get_issue_info(issue_number):
 # repo-only (public_repo).
 def download_attachment(url, dest_path, max_size=10240):
     resp = _request("GET", url,
-        headers={"Authorization": f"Bearer {AUTOREDUCE_TOKEN}", "Accept": "application/octet-stream"},
+        headers={"Accept": "application/octet-stream"},
         stream=True,
     )
     content_length = resp.headers.get("Content-Length")

@@ -417,11 +417,11 @@ def verify_llubi(result, workdir_path):
         # overwritten with fresh content; a stale leftover has no effect
         # on correctness. Adding explicit cleanup after each verify call
         # adds churn without preventing any real problem.
-        # NOTE: opt_out.stdout is not checked for emptiness — a non-zero
-        # returncode is already handled above, and opt -S producing empty
-        # output on valid IR with a zero exit code is not observed in
-        # practice. If this edge case ever occurs, the downstream oracle
-        # call will produce an inconclusive result (not a false positive).
+        # ACCEPTED RISK (F58): opt_out.stdout is not checked for emptiness.
+        # A non-zero returncode is already handled above, and opt -S producing
+        # empty output on valid IR with a zero exit code is not observed in
+        # practice. If this edge case ever occurs, the downstream oracle call
+        # will produce an inconclusive result (not a false positive).
         transformed.write_text(opt_out.stdout)
 
         # ACCEPTED RISK: "__transformed.ll" is passed as a relative
@@ -478,10 +478,8 @@ def verify_alive2(result, workdir_path):
             log.error("alive2 opt failed: %s", opt_out.stderr[:200])
             return False
         transformed = workdir_path / "__transformed.ll"
-        # NOTE: opt_out.stdout is not checked for emptiness — same
-        # rationale as verify_llubi above. The downstream alive-tv call
-        # will produce an inconclusive result on empty IR, not a false
-        # positive miscompilation detection.
+        # ACCEPTED RISK (F58): opt_out.stdout is not checked for emptiness —
+        # same rationale as verify_llubi above.
         transformed.write_text(opt_out.stdout)
 
         # ACCEPTED RISK: "__transformed.ll" is passed as a relative
@@ -565,8 +563,8 @@ def verify_lli(result, workdir_path):
             log.error("lli verify: opt failed: %s", opt_out.stderr[:200])
             return False
         transformed = workdir_path / "__transformed.ll"
-        # NOTE: opt_out.stdout is not checked for emptiness — same
-        # rationale as verify_llubi above.
+        # ACCEPTED RISK (F58): opt_out.stdout is not checked for emptiness —
+        # same rationale as verify_llubi above.
         transformed.write_text(opt_out.stdout)
 
         test = _run_process(
@@ -592,6 +590,13 @@ def verify_lli(result, workdir_path):
 # result.json. It does not independently select or fallback between
 # llubi_legacy and alive-tv — the reducer agent has full context about
 # which oracle succeeded during its opt-bisect-limit binary search.
+# ACCEPTED RISK (F57): verify() and _validate_result() use separate
+# if-else chains for oracle dispatch. If a new oracle is added to
+# _validate_result() without a corresponding branch in verify(), the
+# new oracle silently returns False (all issues dropped as verify_failed).
+# The two sites must be kept in sync manually. There is no programmatic
+# enforcement because both already enumerate the same closed set and new
+# oracle types are expected to be extremely rare.
 def verify(result, workdir_path, meta):
     if result.get("type") == "crash":
         # crash_pattern originates exclusively from extract.json.
