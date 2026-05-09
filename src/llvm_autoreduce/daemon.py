@@ -274,6 +274,8 @@ def _validate_meta(meta):
     # crash output via plain string containment. The extractor agent
     # produces meaningful literal text fragments from actual crash output;
     # agent output is trusted.
+    if bug_type == "crash" and not crash_pattern:
+        raise ValueError("extract.json bug_type=crash requires crash_pattern")
     if crash_pattern and len(crash_pattern) > 2000:
         raise ValueError(f"extract.json crash_pattern too long: {len(crash_pattern)} chars")
 
