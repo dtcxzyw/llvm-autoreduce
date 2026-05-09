@@ -96,6 +96,14 @@ def _check_toolchain():
         if not ok:
             missing.append(f"{name} ({detail})")
     # Miscompilation oracles — built alongside LLVM by update-tools.sh.
+    # ACCEPTED RISK (F59): Oracle binary failures are treated identically to
+    # core LLVM tool failures in the health check. If an oracle binary is
+    # broken (e.g. after a rollback to a known-good hash that no longer
+    # builds against the current LLVM trunk), the entire round is aborted,
+    # including crash-only issues that do not require oracles. The toolchain
+    # is trusted to produce functional binaries; a persistent oracle failure
+    # indicates a systemic build-environment problem that requires operator
+    # intervention regardless.
     for name, oracle_path in (
         ("alive-tv", config.ALIVE2_BIN),
         ("llubi_legacy", config.LLUBI_BIN),

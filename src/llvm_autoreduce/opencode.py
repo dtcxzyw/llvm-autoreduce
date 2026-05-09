@@ -33,6 +33,13 @@ def _env():
     for key in ("USER", "PATH", "TERM", "SHELL", "LANG", "LC_ALL"):
         if key in os.environ:
             env[key] = os.environ[key]
+    # ACCEPTED RISK (F60): All OPENCODE_* environment variables are passed
+    # to every agent subprocess, including the security reviewer (bash: deny).
+    # The security reviewer has read-only file access confined to the workdir
+    # and cannot exfiltrate data without bash. The agent is trusted not to
+    # emit sensitive values into review.json; the opencode CLI requires these
+    # variables for authentication and the shared env construction avoids
+    # per-agent differentiation complexity.
     for key, val in os.environ.items():
         if key.startswith("OPENCODE_"):
             env[key] = val
