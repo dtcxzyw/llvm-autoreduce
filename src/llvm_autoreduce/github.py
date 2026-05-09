@@ -20,7 +20,8 @@ log = logging.getLogger(__name__)
 # in the process's environment variable space.
 HEADERS = {
     "Authorization": f"Bearer {AUTOREDUCE_TOKEN}",
-    "Accept": "application/vnd.github.v3+json",
+    "Accept": "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
 }
 
 
