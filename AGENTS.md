@@ -86,3 +86,7 @@ Both crash and miscompilation pipelines MUST first bisect the full pipeline to i
 ### Interestingness Script Timeouts
 
 Every subprocess inside `interestingness.sh` (opt, llubi_legacy, alive-tv, lli, llc) MUST include a timeout via the `timeout` command to prevent a single hanging candidate from consuming the entire reduction time budget.
+
+### lli Crash → llc Conversion
+
+The crash reduction pipeline does NOT support `lli` (JIT) crashes — `_validate_result` rejects `tool: "lli"` for crash type. When an issue reports an lli crash, the extractor agent MUST attempt to reproduce the crash with `llc` before classifying it. If `llc` crashes on the same IR with the same signature, the issue is classified as an `llc` crash. If `llc` does not crash, the issue is classified as `unrelated` — lli-only crashes are not in scope. This conversion happens at extraction time so the reducer never sees an lli crash classification.
