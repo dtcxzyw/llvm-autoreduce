@@ -10,16 +10,27 @@ All LLVM tools are on PATH: `opt`, `llc`, `lli`, `llvm-reduce`, `clang`, `alive-
 
 **CRITICAL: Reduction operates exclusively on LLVM IR. Never compile IR to native binaries for verification — use the oracle tools (llubi_legacy, alive-tv, lli) directly on IR.**
 
+### 0. Read metadata from extract.json
+Read `extract.json` and note:
+- `pipeline` — the pipeline string from the issue (e.g. `-passes='default<O2>'`).
+- `reproducer_file` — the `.ll` file to reduce.
+
+Create a symlink for convenience so all scripts can use `repro.ll`:
+```
+ln -sf <reproducer_file> repro.ll
+```
+
 ### 1. Reproduce with oracle
 
 First, confirm the miscompilation is reproducible with the oracle on the pipeline.
 
 **llubi_legacy:**
 ```
+set -o pipefail
 llubi_legacy --max-steps 1000000 repro.ll > ref_ubi
-opt -passes='<pipeline>' repro.ll -S | llubi_legacy --max-steps 1000000 - > test_ubi
-diff ref_ubi test_ubi
+! opt -passes='<pipeline>' repro.ll -S | llubi_legacy --max-steps 1000000 - | diff -q ref_ubi -
 ```
+`set -o pipefail` ensures crashes in the pipeline (opt or llubi_legacy segfault) are NOT mistaken for miscompilations — the pipeline returns non-zero on crash, and `diff` is not reached.
 If no diff: not reproducible with llubi, try alive-tv. If diff: proceed to bisect.
 
 **alive-tv:**
@@ -40,9 +51,9 @@ Use `lli` only when the bug is in backend codegen/instruction selection. llubi_l
 **CRITICAL — lli preprocessing:** Before using the `lli` oracle, preprocess the IR to remove `main()` argument dependencies. If `main()` uses `argc`/`argv`, strip those references from the IR (e.g., replace `argc` with a constant, or remove the argument-using code path). Without this preprocessing, `llubi_legacy` and `lli` may produce different output even on a correct backend because `llubi_legacy` does not pass command-line arguments.
 
 ```
+set -o pipefail
 llubi_legacy --max-steps 1000000 repro.ll > ref_ubi
-opt -passes='<pipeline>' repro.ll -S | lli - > test_out
-diff ref_ubi test_out
+! opt -passes='<pipeline>' repro.ll -S | lli - | diff -q ref_ubi -
 ```
 If no diff: not reproducible. If diff: proceed to bisect.
 
@@ -59,16 +70,21 @@ First, get the total pass count:
 opt -opt-bisect-limit=-1 -passes='<pipeline>' repro.ll -S -o /dev/null 2>&1   → total=N
 ```
 
-**llubi_legacy oracle — bisect:**
+**IMPORTANT: Use `set -o pipefail` for all bisect comparisons.** Without pipefail, if the oracle crashes (e.g., llubi_legacy segfaults), the empty output will be mistaken for a miscompilation.
+
+Pre-compute the reference output once (same for all bisect iterations):
 ```
 llubi_legacy --max-steps 1000000 repro.ll > ref_ubi
 ```
+
+**llubi_legacy oracle — bisect:**
 Binary search lo=1, hi=N:
 ```
-opt -opt-bisect-limit=M -passes='<pipeline>' repro.ll -S | llubi_legacy --max-steps 1000000 - > test_ubi
-diff ref_ubi test_ubi
-  same    → lo=M+1  (the miscompilation has not happened yet)
-  diff    → hi=M    (the miscompilation has occurred)
+set -o pipefail
+! opt -opt-bisect-limit=M -passes='<pipeline>' repro.ll -S | llubi_legacy --max-steps 1000000 - | diff -q ref_ubi -
+  same    → lo=M+1  (exit 1: not miscompiled)
+  diff    → hi=M    (exit 0: miscompilation found)
+  crash   → lo=M+1  (pipefail causes non-zero exit from !, so exit 1)
 ```
 Converge to M (the first pass that introduces the miscompilation).
 
@@ -84,21 +100,23 @@ Check the output:
 - "Alive2 approximated" or any other output → inconclusive; treat as lo=M+1 but note the approximation
 
 **lli oracle — bisect:**
+Pre-compute the reference output once:
 ```
 llubi_legacy --max-steps 1000000 repro.ll > ref_ubi
 ```
 Binary search lo=1, hi=N:
 ```
-opt -opt-bisect-limit=M -passes='<pipeline>' repro.ll -S | lli - > test_out
-diff ref_ubi test_out
+set -o pipefail
+! opt -opt-bisect-limit=M -passes='<pipeline>' repro.ll -S | lli - | diff -q ref_ubi -
   same    → lo=M+1
   diff    → hi=M
+  crash   → lo=M+1  (pipefail)
 ```
 Converge to M.
 
 ### 4. Extract the single pass name and capture IR before it
 
-Extract the pass name from the bisect convergence. The pass that triggers the bug is pass M in the pipeline. Determine its name (e.g., "gvn", "licm", "instcombine") from the opt output or the pipeline description.
+The bisect log prints the last pass run before the miscompilation. Use that output to determine the exact pass name. Do NOT guess from filenames.
 
 Capture the IR just before the bad pass:
 ```
@@ -109,15 +127,17 @@ opt -opt-bisect-limit=M-1 -passes='<pipeline>' repro.ll -S > before.ll
 
 **CRITICAL: The interestingness script must use only the single pass (`-passes=<pass_name>`), NOT the full pipeline.**
 
+Pre-compute the reference output once BEFORE running llvm-reduce (so the interestingness script only reads it, never recomputes):
+```
+llubi_legacy --max-steps 1000000 repro.ll > ref_ubi.txt
+```
+
 **llubi_legacy oracle:**
 ```bash
 cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
-set -e
-timeout 120 llubi_legacy --max-steps 1000000 repro.ll > ref_ubi.txt
-timeout 30 opt -passes='<pass_name>' "$1" -S > __tmp.ll
-timeout 120 llubi_legacy --max-steps 1000000 __tmp.ll > test_ubi.txt
-! diff -q ref_ubi.txt test_ubi.txt
+set -eo pipefail
+timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 llubi_legacy --max-steps 1000000 - | ! diff -q ref_ubi.txt -
 SCRIPT
 ```
 
@@ -136,11 +156,8 @@ Note: `grep -qE` returns 0 (interesting=true) only when there is at least one in
 ```bash
 cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
-set -e
-timeout 120 llubi_legacy --max-steps 1000000 repro.ll > ref_ubi.txt
-timeout 30 opt -passes='<pass_name>' "$1" -S > __tmp.ll
-timeout 30 lli __tmp.ll > test_out.txt
-! diff -q ref_ubi.txt test_out.txt
+set -eo pipefail
+timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 30 lli - | ! diff -q ref_ubi.txt -
 SCRIPT
 ```
 
@@ -161,7 +178,6 @@ Verify the reduced IR still reproduces the miscompilation with the single pass.
   "type": "miscompilation",
   "tool": "opt",
   "args": "-passes=gvn",
-  "pass_name": "gvn",
   "ir_file": "reduced.ll",
   "reference_file": "repro.ll",
   "oracle": "llubi",
@@ -177,7 +193,6 @@ The `args` field MUST be the single pass (e.g. `-passes=gvn`), not a full pipeli
   "type": "miscompilation",
   "tool": "opt",
   "args": "-passes=gvn",
-  "pass_name": "gvn",
   "ir_file": "reduced.ll",
   "reference_file": "repro.ll",
   "oracle": "lli",

@@ -1017,7 +1017,7 @@ def reprocess_issue(issue):
     # capture an accurate crash pattern. Skipping this pre-validation
     # would produce lower-quality extract.json and waste reducer agent
     # time on non-reproducible inputs.
-    extract_prompt = "Read issue.md, inspect all files in this directory, identify the reproducer, classify the bug, and write extract.json."
+    extract_prompt = "Read issue.md, inspect all files in this directory, identify the reproducer, classify the bug, extract the crash_pattern (literal substring from crash output, empty for miscompilations), and write extract.json."
     ok = opencode.run(
         agent="extractor",
         workdir=wd,
@@ -1084,7 +1084,7 @@ def reprocess_issue(issue):
     #        the reducer. Multi-file reproducer scenarios (e.g. inter-module
     #        bugs requiring multiple .ll files) are not supported and will
     #        silently fail reduction.
-    reduce_prompt = "Read extract.json to determine the bug type. Load the appropriate skill (llvm-crash-reduce or llvm-miscompile-reduce) and reduce the reproducer. Write result.json."
+    reduce_prompt = "Read extract.json to determine the bug type. Load the appropriate skill (llvm-crash-reduce or llvm-miscompile-reduce) and reduce the reproducer. Note: lli crashes are not supported for crash reduction — if the reproducer crashes in lli (not opt/llc), write result.json with an error field. Write result.json."
     ok = opencode.run(
         agent="reducer",
         workdir=wd,
