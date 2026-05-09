@@ -193,11 +193,6 @@ def is_processed(issue_id):
     return str(issue_id) in _processed_cache
 
 
-def read_prompt(name):
-    path = config.PROJECT_ROOT / "prompts" / name
-    return path.read_text()
-
-
 def _run_process(cmd, **kwargs):
     """Run subprocess with 8GB RLIMIT_AS propagated to child via pre-fork inheritance.
 
@@ -973,7 +968,7 @@ def reprocess_issue(issue):
     #        has no mechanism to pass or verify bash:deny, and does not inspect
     #        the agent's execution log. If opencode's config handling changes,
     #        the reviewer silently gains full bash access on untrusted content.
-    review_prompt = read_prompt("security-reviewer.txt")
+    review_prompt = "Review all reproducer files in this directory for malicious content and patterns. Write your verdict to review.json."
     ok = opencode.run(
         agent="security-reviewer",
         workdir=wd,
@@ -1035,7 +1030,7 @@ def reprocess_issue(issue):
     # capture an accurate crash pattern. Skipping this pre-validation
     # would produce lower-quality extract.json and waste reducer agent
     # time on non-reproducible inputs.
-    extract_prompt = read_prompt("extractor.txt")
+    extract_prompt = "Read issue.md, inspect all files in this directory, identify the reproducer, classify the bug, and write extract.json."
     ok = opencode.run(
         agent="extractor",
         workdir=wd,
@@ -1093,7 +1088,7 @@ def reprocess_issue(issue):
     #        host user account. It generates and executes shell scripts
     #        (interestingness.sh) via llvm-reduce --test. No chroot, namespace,
     #        seccomp, or container isolation is applied. Confinement relies
-    #        solely on natural-language instructions in prompts.
+    #        solely on natural-language instructions in the agent definition.
     #   (F1) No retry on transient failures — if opencode.run returns non-zero
     #        (timeout, API error, etc.), the issue is immediately marked as
     #        processed and never retried. Temporary infrastructure errors
@@ -1102,7 +1097,7 @@ def reprocess_issue(issue):
     #        the reducer. Multi-file reproducer scenarios (e.g. inter-module
     #        bugs requiring multiple .ll files) are not supported and will
     #        silently fail reduction.
-    reduce_prompt = read_prompt("reducer.txt")
+    reduce_prompt = "Read extract.json to determine the bug type. Load the appropriate skill (llvm-crash-reduce or llvm-miscompile-reduce) and reduce the reproducer. Write result.json."
     ok = opencode.run(
         agent="reducer",
         workdir=wd,
