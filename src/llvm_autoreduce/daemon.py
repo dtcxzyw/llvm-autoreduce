@@ -728,9 +728,17 @@ def _fetch_godbolt(body):
             data = _fetch_godbolt_single(short_id)
             for session in data.get("sessions", []):
                 lang = session.get("language", "ir")
-                src = session.get("source", "")
-                if src.strip():
-                    sources.append((src, lang))
+                src = session.get("source")
+                if src is None:
+                    log.debug("godbolt session missing source key, skipping")
+                    continue
+                if not isinstance(src, str):
+                    log.info("godbolt session source is not a string (type=%s), skipping", type(src).__name__)
+                    continue
+                if not src.strip():
+                    log.debug("godbolt session source is empty, skipping")
+                    continue
+                sources.append((src, lang))
         except (requests.RequestException, json.JSONDecodeError):
             # ACCEPTED RISK (F23): json.JSONDecodeError from Godbolt API is
             # caught here and the shortlink is silently skipped. Note that
@@ -1174,7 +1182,7 @@ def reprocess_issue(issue):
     # verification passed) and the only expected failure modes are OSError reading the
     # IR file or an anomalous meta/result structure. Both indicate a permanently
     # unprocessable issue. This path is consistent with every other failure path
-    # in reprocess_issue (see F32).
+    # in reprocess_issue.
     try:
         report = _generate_report(meta, result, wd, issue_id)
     except Exception:
@@ -1310,16 +1318,6 @@ def main():
             _cleanup_old_workdirs()
             issues = github.fetch_issues()
             log.info("round fetched %d issues", len(issues))
-            # ACCEPTED RISK (F32): Per-issue errors are NOT retried within reprocess_issue
-            # by design — every pipeline stage failure (agent timeout, JSON parse, verify
-            # mismatch) calls mark_processed() to permanently skip the issue. Only
-            # GitHub API network errors inside github.create_issue() avoid mark_processed
-            # and allow a natural retry on the next round. The per-issue exception handler
-            # below similarly logs and continues without mark_processed, permitting a future
-            # round to re-attempt. This is the final design decision: transient
-            # infrastructure outages that affect all issues in a round are an accepted
-            # operational trade-off; they naturally sort out on the next poll cycle.
-            # Do not re-audit this pattern.
             for issue in issues:
                 try:
                     reprocess_issue(issue)

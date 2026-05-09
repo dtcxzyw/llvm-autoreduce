@@ -177,49 +177,66 @@ if [ "$LLVM_CURRENT" = "$LLVM_LATEST" ] && [ "$ALIVE2_CURRENT" = "$ALIVE2_LATEST
     exit 0
 fi
 
-# ---- attempt incremental update (per-component rollback) ----
+# ---- attempt incremental update (all-or-nothing triple rollback) ----
+# Build all changed components. If any build fails, roll back the entire
+# triple (LLVM, alive2, llubi) to the last known-good release to preserve
+# ABI compatibility across the toolchain.
 
-if [ "$LLVM_CURRENT" != "$LLVM_LATEST" ]; then
+NEED_LLVM=false
+NEED_ALIVE2=false
+NEED_LLUBI=false
+[ "$LLVM_CURRENT" != "$LLVM_LATEST" ] && NEED_LLVM=true
+[ "$ALIVE2_CURRENT" != "$ALIVE2_LATEST" ] && NEED_ALIVE2=true
+[ "$LLUBI_CURRENT" != "$LLUBI_LATEST" ] && NEED_LLUBI=true
+
+FAILED=false
+
+if $NEED_LLVM; then
     echo "BUILD: LLVM $LLVM_CURRENT → $LLVM_LATEST"
     if checkout_and_build_llvm "$LLVM_LATEST"; then
-        update_known_hash llvm "$LLVM_LATEST"
-        LLVM_CURRENT=$LLVM_LATEST
+        echo "OK: LLVM"
     else
-        echo "FAIL: LLVM build, rolling back"
-        rollback_llvm
-        exit 2
+        echo "FAIL: LLVM build"
+        FAILED=true
     fi
-else
-    echo "UP-TO-DATE: LLVM"
 fi
 
-if [ "$ALIVE2_CURRENT" != "$ALIVE2_LATEST" ]; then
+if $NEED_ALIVE2 && ! $FAILED; then
     echo "BUILD: alive2 $ALIVE2_CURRENT → $ALIVE2_LATEST"
     if checkout_and_build_alive2 "$ALIVE2_LATEST"; then
-        update_known_hash alive2 "$ALIVE2_LATEST"
-        ALIVE2_CURRENT=$ALIVE2_LATEST
+        echo "OK: alive2"
     else
-        echo "FAIL: alive2 build, rolling back"
-        rollback_alive2
-        exit 2
+        echo "FAIL: alive2 build"
+        FAILED=true
     fi
-else
-    echo "UP-TO-DATE: alive2"
 fi
 
-if [ "$LLUBI_CURRENT" != "$LLUBI_LATEST" ]; then
+if $NEED_LLUBI && ! $FAILED; then
     echo "BUILD: llubi $LLUBI_CURRENT → $LLUBI_LATEST"
     if checkout_and_build_llubi "$LLUBI_LATEST"; then
-        update_known_hash llubi "$LLUBI_LATEST"
-        LLUBI_CURRENT=$LLUBI_LATEST
+        echo "OK: llubi"
     else
-        echo "FAIL: llubi build, rolling back"
-        rollback_llubi
-        exit 2
+        echo "FAIL: llubi build"
+        FAILED=true
     fi
-else
-    echo "UP-TO-DATE: llubi"
 fi
 
-record_known_good
+if $FAILED; then
+    echo "ROLLBACK: restoring known-good triple"
+    rollback_llvm
+    rollback_alive2
+    rollback_llubi
+    exit 2
+fi
+
+# All updated components built successfully — record new triple.
+if $NEED_LLVM; then
+    update_known_hash llvm "$LLVM_LATEST"
+fi
+if $NEED_ALIVE2; then
+    update_known_hash alive2 "$ALIVE2_LATEST"
+fi
+if $NEED_LLUBI; then
+    update_known_hash llubi "$LLUBI_LATEST"
+fi
 echo "OK: all tools updated"
