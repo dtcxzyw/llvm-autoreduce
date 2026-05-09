@@ -80,6 +80,15 @@ The `args` for opt should be a reduced single pass (e.g. `-passes=licm`, not a f
 ```
 
 ## Error handling
-- If any step fails, write error to result.json `{"error": "..."}`
+- If any step fails and the crash cannot be reduced, write `result.json` with the FULL schema plus an `error` field describing the reason. The daemon requires all schema fields to be present — a bare `{"error": "..."}` will fail validation. Use:
+```json
+{
+  "type": "crash",
+  "tool": "opt",
+  "args": "",
+  "ir_file": "error.ll",
+  "error": "brief description of what failed"
+}
+```
 - Do NOT generate a report.md file — the daemon handles report generation
 - CRITICAL: All files stay in current working directory, never /tmp, /home, /etc, /var, or any other system path

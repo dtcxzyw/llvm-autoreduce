@@ -133,7 +133,19 @@ Then: `chmod +x interestingness.sh && llvm-reduce --test=interestingness.sh befo
 
 ## Error handling
 - Oracle crash on original IR: try the other oracle
-- x86 verification fails: abort, write `{"error": "not x86 reproducible"}` to result.json
-- Write errors to result.json
+- If all reduction attempts fail, write `result.json` with the FULL schema plus an `error` field describing the reason. The daemon requires all schema fields to be present — a bare `{"error": "..."}` will fail validation. Use:
+```json
+{
+  "type": "miscompilation",
+  "tool": "opt",
+  "args": "",
+  "ir_file": "error.ll",
+  "reference_file": "repro.ll",
+  "oracle": "llubi",
+  "llubi_args": "--max-steps 1000000",
+  "alive2_args": "",
+  "error": "not x86 reproducible"
+}
+```
 - Do NOT generate a report.md file — the daemon handles report generation
 - CRITICAL: All files stay in current working directory, never /tmp, /home, /etc, /var, or any other system path

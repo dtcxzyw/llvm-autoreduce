@@ -1138,6 +1138,12 @@ def reprocess_issue(issue):
         return
 
     # Step 5: verify before submitting
+    if result.get("error"):
+        log.warning("issue=%d reducer reported error: %s", issue_id, result["error"])
+        mark_dropped(issue_id, "reducer_error")
+        mark_processed(issue_id)
+        workdir.cleanup(issue_id)
+        return
     if not verify_extract_consistency(meta, result, wd):
         log.warning("issue=%d extract-result consistency check failed", issue_id)
         mark_dropped(issue_id, "consistency_check_failed")
