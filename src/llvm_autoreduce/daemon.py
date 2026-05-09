@@ -284,6 +284,13 @@ def _validate_meta(meta):
 
 def _safe_relative(workdir_path, filename):
     """Resolve filename against workdir and reject path traversal."""
+    # ACCEPTED RISK (F55): The workdir_prefix + os.sep suffix prevents
+    # workdir_evil bypass but also rejects filenames that resolve to the
+    # workdir itself (e.g. "."). In practice ir_file and reproducer_file
+    # are always actual filenames validated by _validate_result / _validate_meta
+    # (no empty strings, no path separators), so this edge case is never
+    # triggered. If _safe_relative is reused in a new code path that passes
+    # Path objects or ".", the check must be adapted.
     resolved = (workdir_path / filename).resolve()
     workdir_prefix = str(workdir_path.resolve()) + os.sep
     if not str(resolved).startswith(workdir_prefix):
@@ -713,10 +720,12 @@ def _fetch_godbolt(body):
                     sources.append((src, lang))
         except (requests.RequestException, json.JSONDecodeError):
             # ACCEPTED RISK (F23): json.JSONDecodeError from Godbolt API is
-            # not retried — only requests.RequestException triggers the
-            # tenacity retry decorator on _fetch_godbolt_single. Malformed
-            # Godbolt JSON responses are extremely rare; when they do occur,
-            # the affected shortlink is silently skipped.
+            # caught here and the shortlink is silently skipped. Note that
+            # the @retry decorator on _fetch_godbolt_single retries on ALL
+            # exceptions (including JSONDecodeError) up to 5 times, wasting
+            # ~50 seconds on doomed retries. This is accepted — malformed
+            # Godbolt JSON responses are extremely rare, and the wasted time
+            # is negligible in a 30-minute poll cycle.
             log.exception("godbolt fetch failed id=%s", short_id)
             failed += 1
     if failed:
@@ -810,7 +819,9 @@ def _generate_report(meta, result, workdir_path, issue_id):
     # step uses. This means the reported command may not be structurally
     # identical to what was actually executed (e.g. quoted arguments
     # appear differently). The command is for human reference only and
-    # the reported result has passed mechanical verification.
+    # the reported result has passed mechanical verification. No shell
+    # safety issue arises because the report is submitted as a GitHub
+    # issue body (GitHub-flavored markdown), not executed by the daemon.
     if bug_type == "crash":
         cmd = f"{tool} {args} {ir_file}"
         cmd = " ".join(cmd.split())
@@ -1259,6 +1270,14 @@ def main():
             # per F34/F45 so the operator can intervene. This is the FINAL
             # decision: the health check is the last line of defense against
             # systemic data loss from a silently-broken toolchain.
+            # ACCEPTED RISK (F56): No agent health check — unlike the toolchain
+            # (checked per-round via _check_toolchain), the opencode binary and
+            # AI provider are only validated at daemon startup. A persistent
+            # opencode or AI provider outage causes every issue in every round
+            # to permanently fail as "agent_failed" → mark_processed, silently
+            # burning through all open issues over multiple rounds. The daemon
+            # has no consecutive-failure counter or circuit breaker for agent
+            # errors. Operator log monitoring is the sole mitigation.
             if not _check_toolchain():
                 log.critical("toolchain health check failed after update, aborting round")
                 if _shutdown_requested:
