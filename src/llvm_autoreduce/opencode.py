@@ -43,6 +43,16 @@ def _env():
     # The cwd is PROJECT_ROOT (controlled by the daemon operator) and
     # agents already have full bash access (R1/R9), so the incremental
     # risk is negligible.
+    # ACCEPTED RISK (F53): The full host PATH is appended to the agent's
+    # PATH, exposing the complete host binary environment to all agents
+    # including the security reviewer (which has bash: deny but can still
+    # read directory entries). The security reviewer agent has file-read
+    # access to the workdir, and PATH entries reveal which host binaries
+    # are available. Agents with bash access (extractor, reducer) can
+    # already discover this via `which`/`ls` regardless. The incremental
+    # information leak is negligible given that bash-enabled agents have
+    # unrestricted host access (R1/R9) and the security reviewer is
+    # confined to the workdir.
     env["PATH"] = ":".join(paths + [os.environ.get("PATH", "")])
     return env
 

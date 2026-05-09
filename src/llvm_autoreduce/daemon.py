@@ -58,6 +58,30 @@ def _remove_pidfile():
         pidfile.unlink()
 
 
+def _check_binary(binary_path, name):
+    """Check a single toolchain binary: exists, executable, and can run --version.
+
+    Returns (ok: bool, detail: str). ok means the binary is fully functional.
+    detail describes the state for logging: "ok", "missing", "not executable",
+    "exit N", "timeout", or "failed to run".
+    """
+    if not binary_path.is_file():
+        return False, "missing"
+    if not os.access(binary_path, os.X_OK):
+        return False, "not executable"
+    try:
+        result = subprocess.run(
+            [str(binary_path), "--version"], capture_output=True, timeout=30,
+        )
+        if result.returncode == 0:
+            return True, "ok"
+        return False, f"exit {result.returncode}"
+    except subprocess.TimeoutExpired:
+        return False, "timeout"
+    except OSError:
+        return False, "failed to run"
+
+
 def _check_toolchain():
     """Verify critical toolchain binaries exist, are executable, and can run.
 
@@ -68,43 +92,17 @@ def _check_toolchain():
     missing = []
     # LLVM core tools — checked against config.LLVM_BIN (built from source).
     for name in ("opt", "llc", "lli", "llvm-reduce", "clang"):
-        path = config.LLVM_BIN / name
-        if not path.is_file():
-            missing.append(f"{name} (missing)")
-        elif not os.access(path, os.X_OK):
-            missing.append(f"{name} (not executable)")
-        else:
-            try:
-                result = subprocess.run(
-                    [str(path), "--version"], capture_output=True, timeout=30,
-                )
-                if result.returncode != 0:
-                    missing.append(f"{name} (exit {result.returncode})")
-            except subprocess.TimeoutExpired:
-                missing.append(f"{name} (timeout)")
-            except OSError:
-                missing.append(f"{name} (failed to run)")
+        ok, detail = _check_binary(config.LLVM_BIN / name, name)
+        if not ok:
+            missing.append(f"{name} ({detail})")
     # Miscompilation oracles — built alongside LLVM by update-tools.sh.
     for name, oracle_path in (
         ("alive-tv", config.ALIVE2_BIN),
         ("llubi_legacy", config.LLUBI_BIN),
     ):
-        if not oracle_path.is_file():
-            missing.append(f"{name} (missing)")
-        elif not os.access(oracle_path, os.X_OK):
-            missing.append(f"{name} (not executable)")
-        else:
-            try:
-                result = subprocess.run(
-                    [str(oracle_path), "--version"],
-                    capture_output=True, timeout=30,
-                )
-                if result.returncode != 0:
-                    missing.append(f"{name} (exit {result.returncode})")
-            except subprocess.TimeoutExpired:
-                missing.append(f"{name} (timeout)")
-            except OSError:
-                missing.append(f"{name} (failed to run)")
+        ok, detail = _check_binary(oracle_path, name)
+        if not ok:
+            missing.append(f"{name} ({detail})")
     if missing:
         log.critical("toolchain health check FAILED: %s", ", ".join(missing))
         return False
@@ -412,6 +410,11 @@ def verify_llubi(result, workdir_path):
         # overwritten with fresh content; a stale leftover has no effect
         # on correctness. Adding explicit cleanup after each verify call
         # adds churn without preventing any real problem.
+        # NOTE: opt_out.stdout is not checked for emptiness — a non-zero
+        # returncode is already handled above, and opt -S producing empty
+        # output on valid IR with a zero exit code is not observed in
+        # practice. If this edge case ever occurs, the downstream oracle
+        # call will produce an inconclusive result (not a false positive).
         transformed.write_text(opt_out.stdout)
 
         # ACCEPTED RISK: "__transformed.ll" is passed as a relative
@@ -468,6 +471,10 @@ def verify_alive2(result, workdir_path):
             log.error("alive2 opt failed: %s", opt_out.stderr[:200])
             return False
         transformed = workdir_path / "__transformed.ll"
+        # NOTE: opt_out.stdout is not checked for emptiness — same
+        # rationale as verify_llubi above. The downstream alive-tv call
+        # will produce an inconclusive result on empty IR, not a false
+        # positive miscompilation detection.
         transformed.write_text(opt_out.stdout)
 
         # ACCEPTED RISK: "__transformed.ll" is passed as a relative
@@ -551,6 +558,8 @@ def verify_lli(result, workdir_path):
             log.error("lli verify: opt failed: %s", opt_out.stderr[:200])
             return False
         transformed = workdir_path / "__transformed.ll"
+        # NOTE: opt_out.stdout is not checked for emptiness — same
+        # rationale as verify_llubi above.
         transformed.write_text(opt_out.stdout)
 
         test = _run_process(
@@ -1127,6 +1136,13 @@ def reprocess_issue(issue):
     # Step 6: generate report and submit
     # Report is generated mechanically from verified data (meta, result, reduced IR)
     # rather than relying on AI-generated report.md.
+    # ACCEPTED RISK (F54): _generate_report failures are terminal — the issue is
+    # permanently marked processed and never retried. Report generation operates on
+    # already-validated data (meta passed _validate_meta, result passed _validate_result,
+    # verification passed) and the only expected failure modes are OSError reading the
+    # IR file or an anomalous meta/result structure. Both indicate a permanently
+    # unprocessable issue. This path is consistent with every other failure path
+    # in reprocess_issue (see F32).
     try:
         report = _generate_report(meta, result, wd, issue_id)
     except Exception:
@@ -1188,45 +1204,23 @@ def main():
     else:
         log.info("found opencode at %s", opencode_path)
     for binary in ["opt", "clang", "llc", "lli", "llvm-reduce"]:
-        path = config.LLVM_BIN / binary
-        if path.is_file() and os.access(path, os.X_OK):
-            try:
-                result = subprocess.run(
-                    [str(path), "--version"], capture_output=True, timeout=30,
-                )
-                if result.returncode == 0:
-                    log.info("found %s at %s", binary, path)
-                else:
-                    log.warning("%s at %s exited %d on --version", binary, path, result.returncode)
-            except subprocess.TimeoutExpired:
-                log.warning("%s at %s timed out on --version", binary, path)
-            except OSError:
-                log.warning("%s at %s failed to run --version", binary, path)
-        else:
+        ok, detail = _check_binary(config.LLVM_BIN / binary, binary)
+        if ok:
+            log.info("found %s at %s", binary, config.LLVM_BIN / binary)
+        elif detail in ("missing", "not executable"):
             missing.append(binary)
+        else:
+            log.warning("%s at %s: %s on --version", binary, config.LLVM_BIN / binary, detail)
     for oracle_name, oracle_path in (
         ("alive-tv", config.ALIVE2_BIN),
         ("llubi_legacy", config.LLUBI_BIN),
     ):
-        if oracle_path.is_file() and os.access(oracle_path, os.X_OK):
-            try:
-                result = subprocess.run(
-                    [str(oracle_path), "--version"], capture_output=True, timeout=30,
-                )
-                if result.returncode == 0:
-                    log.info("found %s at %s", oracle_name, oracle_path)
-                else:
-                    log.warning("%s at %s exited %d on --version — miscompilation verification will be unavailable",
-                                oracle_name, oracle_path, result.returncode)
-            except subprocess.TimeoutExpired:
-                log.warning("%s at %s timed out on --version — miscompilation verification will be unavailable",
-                            oracle_name, oracle_path)
-            except OSError:
-                log.warning("%s at %s failed to run --version — miscompilation verification will be unavailable",
-                            oracle_name, oracle_path)
+        ok, detail = _check_binary(oracle_path, oracle_name)
+        if ok:
+            log.info("found %s at %s", oracle_name, oracle_path)
         else:
-            log.warning("%s not found at %s — miscompilation verification will be unavailable",
-                        oracle_name, oracle_path)
+            log.warning("%s at %s: %s — miscompilation verification will be unavailable",
+                        oracle_name, oracle_path, detail)
     if missing:
         log.critical("required binaries not found: %s", ", ".join(missing))
         sys.exit(1)
