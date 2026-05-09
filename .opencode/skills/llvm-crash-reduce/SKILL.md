@@ -8,15 +8,21 @@ All LLVM tools are on PATH: `opt`, `llc`, `lli`, `llvm-reduce`, `clang`, `alive-
 
 ## Crash Reduction Pipeline
 
+**CRITICAL: Reduction operates exclusively on LLVM IR. Never compile IR to native binaries for verification.**
+
 ### 1. Reproduce the crash
 Run the crash command from the issue. Extract a literal crash signature substring (e.g., "Assertion `X && Y") — plain text, not regex.
 
 ### 2. Build opt pipeline
 If the issue gives a specific pass, use it directly. Otherwise try `-passes='default<O2>'` or `-passes='default<O3>'`.
 
-### 3. opt-bisect-limit binary search
+### 3. opt-bisect-limit binary search to find single pass
+
+**Goal: identify the single pass that triggers the crash.**
+
+First, get the total pass count:
 ```
-opt -opt-bisect-limit=-1 -passes='<pipeline>' repro.ll 2>&1   → total=N
+opt -opt-bisect-limit=-1 -passes='<pipeline>' repro.ll -S -o /dev/null 2>&1   → total=N
 ```
 Binary search lo=1, hi=N:
 ```
@@ -24,29 +30,30 @@ opt -opt-bisect-limit=M -passes='<pipeline>' repro.ll 2>&1
   crash → hi=M
   ok    → lo=M+1
 ```
-Converge to M.
+Converge to M (the first pass that triggers the crash).
 
-### 4. Capture IR before crashing pass
+### 4. Extract single pass name and capture IR before it
+
+Extract the pass name from the crash output (e.g., "Assertion failed at LICM.cpp" → pass is "licm") or from the bisect log (opt prints the last pass run before the crash).
+
+Capture the IR just before the crashing pass:
 ```
 opt -opt-bisect-limit=M-1 -passes='<pipeline>' repro.ll -S > before.ll
 ```
-Extract pass name from crash output or bisect log.
 
 ### 5. Handle llc crashes
 If crash is in llc (not opt), skip bisect and go directly to llvm-reduce with an interestingness script that runs llc and checks for the crash signature.
 **Crash in lli is not supported** — the daemon will reject result.json with `tool: "lli"` for crash type.
 
-### 6. llvm-reduce
+### 6. llvm-reduce with ONLY the single pass
+
+**CRITICAL: The interestingness script must use only the single pass (`-passes=<pass_name>`), NOT the full pipeline.**
+
 ```bash
-# NOTE: This script is LLM-generated content fed to llvm-reduce as --test.
-# llvm-reduce executes the script to test interestingness — this is an
-# accepted risk because (a) the workdir is isolated and (b) the security
-# reviewer has already screened reproducer content before reaching this stage.
-# NOTE: grep -F treats the signature as a literal (fixed) string, not a
-# regex. The crash_pattern from extract.json is a plain text fragment.
 cat > interestingness.sh <<'EOF'
 #!/bin/bash
-opt -passes='<pass>' "$1" 2>&1 | grep -qF "<signature>"
+set -e
+timeout 30 opt -passes='<pass_name>' "$1" 2>&1 | grep -qF "<signature>"
 EOF
 chmod +x interestingness.sh
 llvm-reduce --test=interestingness.sh before.ll
@@ -54,7 +61,7 @@ llvm-reduce --test=interestingness.sh before.ll
 Output: `reduced.ll`
 
 ### 7. Verify
-Run the pass on `reduced.ll`, confirm crash signature still matches.
+Run the single pass on `reduced.ll`, confirm crash signature still matches.
 
 ### 8. Write results
 
@@ -67,7 +74,7 @@ Run the pass on `reduced.ll`, confirm crash signature still matches.
   "ir_file": "reduced.ll"
 }
 ```
-The `args` for opt should be a reduced single pass (e.g. `-passes=licm`, not a full pipeline like `-passes=default<O2>`). This is best effort — if bisect cannot isolate a single pass, use the smallest pipeline possible.
+The `args` for opt MUST be the single pass (e.g. `-passes=licm`), not a full pipeline like `-passes=default<O2>`.
 
 **result.json for llc:**
 ```json

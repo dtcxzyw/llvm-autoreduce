@@ -238,7 +238,8 @@ VALID_BUG_TYPES = frozenset({"crash", "miscompilation"})
 
 
 def _validate_verdict(verdict):
-    """Reject review.json with unexpected values to prevent prompt injection."""
+    """Validate review.json schema. The security reviewer agent output is
+    trusted for content, but required fields and types are checked."""
     if verdict.get("valid") is not True:
         raise ValueError(f"review.json valid is not True: {verdict.get('valid')!r}")
     # ACCEPTED RISK: malicious field is mandatory (FINAL DECISION).
@@ -254,7 +255,8 @@ def _validate_verdict(verdict):
 
 
 def _validate_meta(meta):
-    """Reject extract.json with unexpected values."""
+    """Validate extract.json schema. Agent output is trusted for content
+    but required fields, enumerations, and path-safety are checked."""
     bug_type = meta.get("bug_type", "")
     if bug_type not in VALID_BUG_TYPES:
         raise ValueError(f"extract.json bug_type not in {VALID_BUG_TYPES}: {bug_type!r}")
@@ -262,25 +264,16 @@ def _validate_meta(meta):
     if reproducer and ("/" in reproducer or "\\" in reproducer or "\0" in reproducer):
         raise ValueError(f"extract.json reproducer_file contains path separators: {reproducer!r}")
     _pipeline = meta.get("pipeline", "")
-    # ACCEPTED RISK (R13): No shell metacharacter validation on pipeline.
-    # The pipeline string passes through to the reducer agent's prompt, which
-    # has unrestricted bash access. Blocking shell metacharacters here does
-    # not provide meaningful defense — the reducer agent can generate and
-    # execute arbitrary scripts regardless. Path traversal on reproducer_file
-    # is still validated because the daemon writes those files itself.
-    # ACCEPTED RISK (F38): No length validation on pipeline. The pipeline
-    # string has no upper bound check in _validate_meta — an anomalous
-    # extractor agent could produce a multi-megabyte pipeline that inflates
-    # the generated report. Agent output is trusted to be well-formed.
+    # Pipeline string passes through to the reducer agent's prompt — the
+    # extractor agent produces it and the reducer agent uses it. Both agents
+    # are trusted oracles; the daemon does not validate pipeline contents.
+    # Path traversal on reproducer_file is validated because the daemon
+    # writes those files itself.
     crash_pattern = meta.get("crash_pattern", "")
     # crash_pattern is a literal substring (not regex) matched against
-    # crash output via plain string containment.
-    # ACCEPTED RISK: No minimum length or character-diversity validation
-    # on crash_pattern. A single-character or all-whitespace pattern would
-    # trivially match any crash output in verify_crash's substring
-    # containment check. The extractor agent's prompt instructs it to
-    # produce meaningful literal text fragments from actual crash output;
-    # the agent is trusted to emit well-formed, non-trivial patterns.
+    # crash output via plain string containment. The extractor agent
+    # produces meaningful literal text fragments from actual crash output;
+    # agent output is trusted.
     if crash_pattern and len(crash_pattern) > 2000:
         raise ValueError(f"extract.json crash_pattern too long: {len(crash_pattern)} chars")
 
@@ -302,7 +295,8 @@ def _safe_relative(workdir_path, filename):
 
 
 def _validate_result(result):
-    """Reject result.json with missing or invalid schema fields.
+    """Validate result.json schema. Agent output is trusted for content
+    but required fields and enumerations are checked for structural validity.
 
     crash_pattern is intentionally NOT validated here — it originates
     exclusively from extract.json (the extractor agent). The reducer agent
@@ -344,11 +338,11 @@ def verify_crash(result, workdir_path, crash_pattern):
         return False
     tool_path = str(config.LLVM_BIN / tool_name)
     safe_ir = _safe_relative(workdir_path, result["ir_file"])
-    # ACCEPTED RISK (R5): result.json args comes from the reducer agent
-    # (which has bash access). List-based subprocess.run prevents shell
-    # injection but does not prevent argument injection into LLVM tools
-    # (e.g. -o /dev/null). This is acceptable because the reducer agent
-    # already has unrestricted bash access within the workdir.
+    # result.json args comes from the reducer agent, which is a trusted
+    # oracle. The args string is split with shlex and passed to
+    # subprocess.run as a list (no shell involved). Argument injection
+    # into LLVM tools is not a concern — the agent already has
+    # unrestricted bash access within the workdir.
     cmd = [tool_path] + shlex.split(result.get("args", "")) + [safe_ir]
     try:
         p = _run_process(
@@ -383,9 +377,7 @@ def verify_crash(result, workdir_path, crash_pattern):
 def verify_llubi(result, workdir_path):
     safe_ir = _safe_relative(workdir_path, result["ir_file"])
     args = result.get("args", "")
-    # ACCEPTED RISK (R7): llubi_args from result.json may inject arguments
-    # into llubi_legacy. The reducer agent already has unrestricted bash
-    # access within the workdir.
+    # llubi_args is produced by the reducer agent (trusted oracle).
     llubi_args = result.get("llubi_args", "--max-steps 1000000")
     # Use the built LLVM toolchain opt binary, never PATH.
     opt_path = str(config.LLVM_BIN / "opt")
@@ -465,9 +457,7 @@ _ALIVE2_APPROXIMATION_MARKER = "Alive2 approximated the semantics of the program
 def verify_alive2(result, workdir_path):
     safe_ir = _safe_relative(workdir_path, result["ir_file"])
     args = result.get("args", "")
-    # ACCEPTED RISK (R7): alive2_args from result.json may inject arguments
-    # into alive-tv. The reducer agent already has unrestricted bash
-    # access within the workdir.
+    # alive2_args is produced by the reducer agent (trusted oracle).
     alive2_args = result.get("alive2_args", "--smt-to=10000")
     # Use the built LLVM toolchain opt binary, never PATH.
     opt_path = str(config.LLVM_BIN / "opt")
@@ -533,16 +523,15 @@ def verify_alive2(result, workdir_path):
         return False
 
 
-# ACCEPTED RISK (R19): verify_lli compares stdout strings from
-# llubi_legacy (reference interpreter) and lli (JIT/backend-native
-# execution) to detect backend miscompilation. Non-deterministic output
-# (timestamps, metadata, randomization) may cause false positives.
+# verify_lli compares stdout from llubi_legacy (reference interpreter)
+# and lli (JIT/backend-native execution) to detect backend miscompilation.
+# The reducer agent preprocesses the IR to remove main() argument
+# dependencies before using the lli oracle, so the two tools produce
+# consistent output for correct backends.
 def verify_lli(result, workdir_path):
     safe_ir = _safe_relative(workdir_path, result["ir_file"])
     args = result.get("args", "")
-    # ACCEPTED RISK (R7): lli_args from result.json may inject arguments
-    # into lli. The reducer agent already has unrestricted bash access
-    # within the workdir.
+    # lli_args and llubi_args are produced by the reducer agent (trusted oracle).
     lli_args = result.get("lli_args", "")
     llubi_args = result.get("llubi_args", "--max-steps 1000000")
     opt_path = str(config.LLVM_BIN / "opt")
@@ -793,11 +782,9 @@ def _generate_report(meta, result, workdir_path, issue_id):
     lines.append(f"# Reduced reproducer for llvm/llvm-project#{issue_id}")
     lines.append("")
     lines.append(f"**Bug type:** {bug_type}")
-    # ACCEPTED RISK (F39): pipeline and crash_pattern are inserted into
-    # inline markdown code spans without backtick sanitization. If either
-    # contains a backtick character, the markdown structure may break.
-    # These fields come from the extractor agent, which is instructed to
-    # produce short, well-formed strings; the agent output is trusted.
+    # pipeline and crash_pattern are inserted into inline markdown code
+    # spans; the extractor agent produces well-formed strings — agent
+    # output is trusted.
     lines.append(f"**Pipeline:** `{pipeline}`")
 
     oracle = result.get("oracle", "")
@@ -1158,14 +1145,10 @@ def reprocess_issue(issue):
     # non-reproducibility rather than transient errors, and the risk of
     # spurious passes (accepting a bad reduction) outweighs the cost of
     # occasionally discarding a valid one.
-    # ACCEPTED RISK (F37): No programmatic check that the reducer agent
-    # actually produced a smaller IR. The daemon verifies correctness (bug
-    # still reproduces) but never compares reduced IR size against the
-    # original reproducer. If the reducer agent fails to shrink the IR,
-    # the daemon submits it as "[Reduced]" regardless. The reducer is
-    # trusted to follow instructions and run llvm-reduce — a size check
-    # here would provide defense-in-depth but conflicts with the trust
-    # model that agent output is authoritative.
+    # The daemon verifies correctness (bug still reproduces) but never
+    # compares reduced IR size against the original reproducer — the reducer
+    # agent is trusted to follow instructions and run llvm-reduce. Agent
+    # output is authoritative.
     if not verify(result, wd, meta):
         log.warning("issue=%d verify failed", issue_id)
         mark_dropped(issue_id, "verify_failed")

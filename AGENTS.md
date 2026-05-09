@@ -64,3 +64,25 @@
 - **AUDIT SCOPE — NON-DETERMINISTIC GODBOLT LINK SELECTION:** Do not audit the non-deterministic ordering of Godbolt links when >3 are present (`set(list(links)[:3])` in `_fetch_godbolt`). Most issues contain ≤2 Godbolt links, and an issue is processed exactly once, so link-ordering variation across runs has zero practical impact.
 - **AUDIT SCOPE — AGENT OUTPUT FIELD BOUNDS:** Do not audit for missing upper bounds on agent-produced fields (e.g., `llubi_args`, `alive2_args`, `lli_args`, `args`). The daemon trusts agent output as authoritative. Subprocess execution uses 8 GB RLIMIT_AS and per-call timeouts (`VERIFY_TIMEOUT`, `REDUCE_TIMEOUT`) which bound resource consumption regardless of argument values. Extreme values may cause systemic per-round false negatives if every issue triggers a timeout, but the agent is trusted to produce reasonable values and such behavior would be observable via daemon logs. Adding programmatic bounds on individual fields is unnecessary defense-in-depth.
 - **AUDIT SCOPE — AGENT FORMAT ERRORS:** Do not audit for agent-produced format errors in `_generate_report` (e.g., backtick characters in `pipeline` / `crash_pattern` breaking markdown code spans, triple-backtick sequences in reduced IR breaking the code fence). The report is submitted as a GitHub issue body for human consumption — malformed markdown is a cosmetic issue, not a security or correctness concern. Natural Python exceptions (e.g., `KeyError` from direct dict access on missing keys) are acceptable because `_validate_meta` / `_validate_result` already enforce schema conformance upstream and failures are logged via `log.exception`. No additional defensive formatting or schema re-validation is needed in the report generation path.
+
+## Design Philosophy
+
+### Agent as Oracle
+
+The reducer and extractor agents are trusted as authoritative oracles. Every field produced by an agent (`args`, `pipeline`, `crash_pattern`, `alive2_args`, `llubi_args`, `lli_args`, `pass_name`, `oracle`, `reference_file`, `ir_file`) is accepted verbatim. The daemon never second-guesses or overrides agent decisions — the agent's `result.json` is the single source of truth. The daemon's `verify()` step confirms that the bug still reproduces with the reported tool and arguments but does NOT re-derive the pass, oracle, or pipeline.
+
+### llubi_legacy / lli Equivalence
+
+`llubi_legacy` (reference interpreter) and `lli` (JIT backend) produce identical stdout for correct IR when the backend has no bug. However, if the IR's `main()` function uses `argc`/`argv`, the two tools may produce different output even on correct backends because `llubi_legacy` does not pass command-line arguments. Before using the `lli` oracle, the reducer agent MUST preprocess the IR to remove `main()` argument dependencies — either by stripping `argc`/`argv` usage from the IR or by confirming the IR does not use command-line arguments.
+
+### Always Generate IR First
+
+Reduction operates exclusively on LLVM IR. Never use `clang` to compile C/C++ reproducers to native binaries for verification — the oracle tools (llubi_legacy, alive-tv, lli) work directly on IR. If a reproducer is C/C++ source, the extractor agent compiles it to `.ll` once; all subsequent pipeline stages work with the `.ll` file.
+
+### Bisect to Single Pass Before Reduce
+
+Both crash and miscompilation pipelines MUST first bisect the full pipeline to identify the single pass that triggers the bug, then run `llvm-reduce` with only that single pass. This produces the smallest possible `args` field (e.g. `-passes=licm` instead of `-passes='default<O2>'`).
+
+### Interestingness Script Timeouts
+
+Every subprocess inside `interestingness.sh` (opt, llubi_legacy, alive-tv, lli, llc) MUST include a timeout via the `timeout` command to prevent a single hanging candidate from consuming the entire reduction time budget.
