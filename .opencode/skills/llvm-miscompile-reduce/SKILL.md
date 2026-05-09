@@ -99,6 +99,7 @@ Check the output:
 - Both "0 incorrect transformations" **and** "Transformation seems to be correct!" present → lo=M+1 (correct)
 - "incorrect transformation" count > 0 or "ERROR: Value mismatch" → hi=M (miscompilation found)
 - "Alive2 approximated" or any other output → inconclusive; treat as lo=M+1 but note the approximation
+**ACCEPTED RISK:** If alive-tv crashes during bisect, its output will not contain "incorrect transformation" or "ERROR: Value mismatch", causing the agent to treat the crash as lo=M+1 (no miscompilation found). Without `set -o pipefail`, a non-zero exit code from alive-tv is invisible to the agent's output-based check. This is accepted because alive-tv crashes on valid IR are rare and the daemon's final verification step independently confirms the miscompilation.
 
 **lli oracle — bisect:**
 Pre-compute the reference output once:
@@ -128,17 +129,13 @@ opt -opt-bisect-limit=M-1 -passes='<pipeline>' repro.ll -S > before.ll
 
 **CRITICAL: The interestingness script must use only the single pass (`-passes=<pass_name>`), NOT the full pipeline.**
 
-Pre-compute the reference output once BEFORE running llvm-reduce (so the interestingness script only reads it, never recomputes):
-```
-llubi_legacy --max-steps 1000000 repro.ll > ref_ubi.txt
-```
-
 **llubi_legacy oracle:**
 ```bash
 cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
 set -eo pipefail
-timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 llubi_legacy --max-steps 1000000 - | ! diff -q ref_ubi.txt -
+timeout 120 llubi_legacy --max-steps 1000000 "$1" > _ref.txt
+timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 llubi_legacy --max-steps 1000000 - | ! diff -q _ref.txt -
 SCRIPT
 ```
 **ACCEPTED RISK:** Crash → interesting. `!` inverts the pipeline exit: if opt or llubi_legacy crashes, the `pipefail` pipeline exits non-zero, `!` flips it to 0 (interesting). The daemon's final verify step independently confirms the miscompilation and rejects crash-confused reductions.
@@ -159,7 +156,8 @@ Note: `grep -qE` returns 0 (interesting=true) only when there is at least one in
 cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
 set -eo pipefail
-timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 30 lli - | ! diff -q ref_ubi.txt -
+timeout 120 llubi_legacy --max-steps 1000000 "$1" > _ref.txt
+timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 30 lli - | ! diff -q _ref.txt -
 SCRIPT
 ```
 **ACCEPTED RISK:** Crash → interesting. Same `!` + `pipefail` inversion as the llubi interestingness script — if opt or lli crashes, the non-zero pipeline exit is inverted to 0 (interesting). The daemon's final verify step independently confirms the miscompilation and rejects crash-confused reductions.

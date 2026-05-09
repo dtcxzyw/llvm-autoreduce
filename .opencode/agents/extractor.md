@@ -21,7 +21,7 @@ Your job:
 
 Write your findings to `extract.json`:
 {
-  "bug_type": "crash",
+  "type": "crash",
   "reproducer_file": "inline_1.ll",
   "crash_pattern": "failed at LICM.cpp",
   "pipeline": "-passes='default<O2>'"

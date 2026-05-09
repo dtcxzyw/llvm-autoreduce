@@ -257,9 +257,9 @@ def _validate_verdict(verdict):
 def _validate_meta(meta):
     """Validate extract.json schema. Agent output is trusted for content
     but required fields, enumerations, and path-safety are checked."""
-    bug_type = meta.get("bug_type", "")
+    bug_type = meta.get("type", "")
     if bug_type not in VALID_BUG_TYPES:
-        raise ValueError(f"extract.json bug_type not in {VALID_BUG_TYPES}: {bug_type!r}")
+        raise ValueError(f"extract.json type not in {VALID_BUG_TYPES}: {bug_type!r}")
     reproducer = meta.get("reproducer_file", "")
     if reproducer and ("/" in reproducer or "\\" in reproducer or "\0" in reproducer):
         raise ValueError(f"extract.json reproducer_file contains path separators: {reproducer!r}")
@@ -275,7 +275,7 @@ def _validate_meta(meta):
     # produces meaningful literal text fragments from actual crash output;
     # agent output is trusted.
     if bug_type == "crash" and not crash_pattern:
-        raise ValueError("extract.json bug_type=crash requires crash_pattern")
+        raise ValueError("extract.json type=crash requires crash_pattern")
     if crash_pattern and len(crash_pattern) > 2000:
         raise ValueError(f"extract.json crash_pattern too long: {len(crash_pattern)} chars")
 
@@ -624,18 +624,18 @@ def verify_extract_consistency(meta, result, workdir_path):
     crash_pattern is validated against meta only — result.json no longer
     carries crash_pattern (it originates exclusively from extract.json).
     """
-    bug_type = meta.get("bug_type", "")
+    bug_type = meta.get("type", "")
     result_type = result.get("type", "")
     if bug_type and result_type and bug_type != result_type:
-        log.warning("bug_type mismatch: extract=%s result=%s", bug_type, result_type)
+        log.warning("type mismatch: extract=%s result=%s", bug_type, result_type)
         return False
 
     crash_pattern = meta.get("crash_pattern", "")
     if bug_type == "crash" and not crash_pattern:
-        log.warning("extract bug_type=crash but crash_pattern is empty")
+        log.warning("extract type=crash but crash_pattern is empty")
         return False
     if bug_type == "miscompilation" and crash_pattern:
-        log.warning("extract bug_type=miscompilation but crash_pattern is non-empty, ignoring crash_pattern")
+        log.warning("extract type=miscompilation but crash_pattern is non-empty, ignoring crash_pattern")
 
     ir_file = result.get("ir_file", "")
     if ir_file and not (workdir_path / ir_file).exists():
@@ -777,7 +777,7 @@ def _generate_report(meta, result, workdir_path, issue_id):
     Replaces the AI agent-generated report.md with deterministic output
     built from extract.json, result.json, and the reduced IR file.
     """
-    bug_type = meta.get("bug_type", "unknown")
+    bug_type = meta.get("type", "unknown")
     pipeline = meta.get("pipeline", "")
     crash_pattern = meta.get("crash_pattern", "")
 
@@ -1063,8 +1063,8 @@ def reprocess_issue(issue):
     # identify non-LLVM-bug issues (e.g., build errors, documentation
     # requests miscategorized as bugs). These are explicitly tracked as a
     # distinct reason rather than lumped into extract_validation_failed.
-    if meta.get("bug_type") == "unrelated":
-        log.warning("issue=%d extract reported bug_type=unrelated, skip", issue_id)
+    if meta.get("type") == "unrelated":
+        log.warning("issue=%d extract reported type=unrelated, skip", issue_id)
         mark_dropped(issue_id, "extract_bug_unrelated")
         mark_processed(issue_id)
         workdir.cleanup(issue_id)
@@ -1185,13 +1185,13 @@ def reprocess_issue(issue):
         mark_processed(issue_id)
         workdir.cleanup(issue_id)
         return
-    # ACCEPTED RISK: meta['bug_type'] uses direct key access (not .get)
+    # ACCEPTED RISK: meta['type'] uses direct key access (not .get)
     # because _validate_meta already guarantees the key is present with a
     # value in VALID_BUG_TYPES at this point in the pipeline. A future
     # refactor that calls _generate_report at a different stage must
     # preserve this invariant. The agent output is trusted to include
-    # bug_type in every valid extract.json.
-    report_title = f"[Reduced] {meta['bug_type']} — #{issue_id}"
+    # type in every valid extract.json.
+    report_title = f"[Reduced] {meta['type']} — #{issue_id}"
     try:
         url = github.create_issue(report_title, report)
         log.info("issue=%d submitted %s", issue_id, url)
