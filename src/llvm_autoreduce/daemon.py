@@ -374,6 +374,14 @@ def verify_crash(result, workdir_path, crash_pattern):
 # ACCEPTED RISK (R6): verify_llubi compares exact stdout strings
 # to detect miscompilation. Non-deterministic output (timestamps,
 # metadata, randomization) may cause false positives.
+#
+# ACCEPTED RISK: This verify function is the safety net for the reducer
+# agent's bisect and llvm-reduce interestingness scripts. The skill's
+# shell scripts (llvm-miscompile-reduce/SKILL.md) use `!` + `pipefail` +
+# `diff`, which causes oracle/tool crashes to be treated as miscompilation
+# (non-zero pipeline exit inverted to 0 by `!`). The verify step here
+# independently runs the oracle and checks returncode, catching
+# crash-confused reductions produced by the skill's scripts.
 def verify_llubi(result, workdir_path):
     safe_ir = _safe_relative(workdir_path, result["ir_file"])
     args = result.get("args", "")

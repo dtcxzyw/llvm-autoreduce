@@ -30,7 +30,7 @@ set -o pipefail
 llubi_legacy --max-steps 1000000 repro.ll > ref_ubi
 ! opt -passes='<pipeline>' repro.ll -S | llubi_legacy --max-steps 1000000 - | diff -q ref_ubi -
 ```
-`set -o pipefail` ensures crashes in the pipeline (opt or llubi_legacy segfault) are NOT mistaken for miscompilations — the pipeline returns non-zero on crash, and `diff` is not reached.
+**ACCEPTED RISK:** Crashes in the pipeline (opt or llubi_legacy segfault) are treated as miscompilation: `pipefail` makes the pipeline exit non-zero on crash, `!` inverts that to exit 0 ("miscompilation found"). This affects both the reproduction check and the bisect step — a buggy pass that crashes will be incorrectly selected as the miscompilation trigger. The daemon's final `verify()` step independently checks the reduced IR and will reject cases where the miscompilation does not actually reproduce, so a crash-confused reduction is caught at verification time.
 If no diff: not reproducible with llubi, try alive-tv. If diff: proceed to bisect.
 
 **alive-tv:**
@@ -55,6 +55,7 @@ set -o pipefail
 llubi_legacy --max-steps 1000000 repro.ll > ref_ubi
 ! opt -passes='<pipeline>' repro.ll -S | lli - | diff -q ref_ubi -
 ```
+**ACCEPTED RISK:** Crash → miscompilation. Same `!` + `pipefail` inversion as llubi reproduction (line 33). The daemon's verify step independently confirms the miscompilation.
 If no diff: not reproducible. If diff: proceed to bisect.
 
 ### 2. Choose oracle
@@ -70,7 +71,7 @@ First, get the total pass count:
 opt -opt-bisect-limit=-1 -passes='<pipeline>' repro.ll -S -o /dev/null 2>&1   → total=N
 ```
 
-**IMPORTANT: Use `set -o pipefail` for all bisect comparisons.** Without pipefail, if the oracle crashes (e.g., llubi_legacy segfaults), the empty output will be mistaken for a miscompilation.
+**IMPORTANT: Use `set -o pipefail` for all bisect comparisons.** Without pipefail, if the oracle crashes (e.g., llubi_legacy segfaults), the empty output will be mistaken for a miscompilation. Note: even with pipefail, a crash is still treated as miscompilation because `!` inverts the non-zero pipeline exit to 0 (see ACCEPTED RISK annotations on the crash rows below).
 
 Pre-compute the reference output once (same for all bisect iterations):
 ```
@@ -84,7 +85,7 @@ set -o pipefail
 ! opt -opt-bisect-limit=M -passes='<pipeline>' repro.ll -S | llubi_legacy --max-steps 1000000 - | diff -q ref_ubi -
   same    → lo=M+1  (exit 1: not miscompiled)
   diff    → hi=M    (exit 0: miscompilation found)
-  crash   → lo=M+1  (pipefail causes non-zero exit from !, so exit 1)
+  crash   → hi=M    (ACCEPTED RISK: pipefail non-zero exit is inverted by ! to exit 0 — crash is treated as miscompilation)
 ```
 Converge to M (the first pass that introduces the miscompilation).
 
@@ -110,7 +111,7 @@ set -o pipefail
 ! opt -opt-bisect-limit=M -passes='<pipeline>' repro.ll -S | lli - | diff -q ref_ubi -
   same    → lo=M+1
   diff    → hi=M
-  crash   → lo=M+1  (pipefail)
+  crash   → hi=M    (ACCEPTED RISK: crash treated as miscompilation — same ! inversion as llubi bisect)
 ```
 Converge to M.
 
@@ -140,6 +141,7 @@ set -eo pipefail
 timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 llubi_legacy --max-steps 1000000 - | ! diff -q ref_ubi.txt -
 SCRIPT
 ```
+**ACCEPTED RISK:** Crash → interesting. `!` inverts the pipeline exit: if opt or llubi_legacy crashes, the `pipefail` pipeline exits non-zero, `!` flips it to 0 (interesting). The daemon's final verify step independently confirms the miscompilation and rejects crash-confused reductions.
 
 **alive-tv oracle:**
 ```bash
@@ -160,6 +162,7 @@ set -eo pipefail
 timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 30 lli - | ! diff -q ref_ubi.txt -
 SCRIPT
 ```
+**ACCEPTED RISK:** Crash → interesting. Same `!` + `pipefail` inversion as the llubi interestingness script — if opt or lli crashes, the non-zero pipeline exit is inverted to 0 (interesting). The daemon's final verify step independently confirms the miscompilation and rejects crash-confused reductions.
 
 Then:
 ```
