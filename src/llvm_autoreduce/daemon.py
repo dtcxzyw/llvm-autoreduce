@@ -840,7 +840,7 @@ def _generate_report(meta, result, workdir_path, issue_id):
             lines.append("# Reference:")
             lines.append(f"llubi_legacy {llubi_args} {ir_file}")
             lines.append("# Transformed (incorrect):")
-            lines.append(f"opt {args} {ir_file} -S | llubi_legacy {llubi_args} /dev/stdin")
+            lines.append(f"opt {args} {ir_file} -S > __reduced_opt.ll && llubi_legacy {llubi_args} __reduced_opt.ll")
             lines.append("```")
         elif oracle == "lli":
             lli_args = result.get("lli_args", "")
@@ -849,7 +849,7 @@ def _generate_report(meta, result, workdir_path, issue_id):
             lines.append("# Reference:")
             lines.append(f"llubi_legacy {llubi_args} {ir_file}")
             lines.append("# Transformed (incorrect, via backend):")
-            lines.append(f"opt {args} {ir_file} -S | lli {lli_args} /dev/stdin")
+            lines.append(f"opt {args} {ir_file} -S > __reduced_opt.ll && lli {lli_args} __reduced_opt.ll")
             lines.append("```")
 
     return "\n".join(lines)
@@ -897,6 +897,14 @@ def reprocess_issue(issue):
     # edits between rounds are extremely rare — the typical retry case is a
     # transient GitHub API error with an unchanged body.
     wd = workdir.create(issue_id)
+
+    # Remove stale agent output files from a prior failed run to prevent
+    # them from being mistaken for fresh agent output if an agent crashes
+    # before writing its own result. See F27 for exist_ok reuse rationale.
+    for stale in ("review.json", "extract.json", "result.json"):
+        stale_path = wd / stale
+        if stale_path.exists():
+            stale_path.unlink()
 
     # Step 1: validate body size before any network operations.
     # Large bodies waste Godbolt API calls and attachment downloads on
