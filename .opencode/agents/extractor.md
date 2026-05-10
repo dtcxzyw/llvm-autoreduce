@@ -53,10 +53,10 @@ Your job:
     - **Backend crash:** `clang -x c -O2 -S -emit-llvm source.c -o reproducer.ll` to get IR after mid-end but before backend codegen, then `llc reproducer.ll` to trigger. oracle=`llc`.
 
     **For miscompilation:** Confirm using only IR-level oracle tools (llubi_legacy, lli). **NEVER compile IR to native binaries or execute native binaries.**
-    - `llubi_legacy reproducer.ll` (pre-opt IR) → `ref_out`
+    - `llubi_legacy reproducer.ll` (pre-opt IR, compiled with `-Xclang -disable-llvm-passes`) → `ref_out`
     - `opt -passes='default<O2>' reproducer.ll -S | llubi_legacy` → `opt_out`
     - If `ref_out` ≠ `opt_out`, or transformed llubi crashes/exits nonzero → **mid-end miscompilation**. oracle=`opt`.
-    - If `ref_out` = `opt_out` → the mid-end is correct. Pipe through lli to test the backend: `opt -passes='default<O2>' reproducer.ll -S | lli -` → if output differs, or lli crashes/exits nonzero, oracle=`llc`.
+    - If `ref_out` = `opt_out` → the mid-end is correct. Generate fully-optimized IR: `clang -O2 -S -emit-llvm source.c -o full_opt.ll` (without `-disable-llvm-passes`, so the IR is already optimized). Then `lli full_opt.ll` — if output differs from reference, or lli crashes/exits nonzero, oracle=`llc`.
     - If **neither** oracle can reproduce (both produce identical output and exit 0), classify as `type: "unrelated"`.
     - **CRITICAL — lli crash handling:** If the crash output originates from lli/JIT, first try `llc` on the same IR. If `llc` also crashes → classify as `crash` (llc). If `llc` does NOT crash → classify as `miscompilation`, because the JIT crash indicates a backend codegen bug, not a crash in the compiler itself. The reducer never sees lli crash.
  3. **Compile C/C++ to IR if needed.** If any reproducer is C/C++ source, compile to IR AT THE REPORTED OPT LEVEL (never -O0) using: `clang -x c -O2 -Xclang -disable-llvm-passes -S -emit-llvm <source> -o reproducer.ll`. Use -O1/-O2/-O3 to match the issue's optimization level. The reproducer_file in extract.json MUST always be a .ll file.
