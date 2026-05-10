@@ -28,10 +28,9 @@ REVIEW_TIMEOUT = 300
 # Extractor needs more time — it compiles C sources and runs toolchain
 # commands to reproduce the bug before classification.
 EXTRACT_TIMEOUT = 600
-# Single opencode reduction run typically completes in under 2 minutes
-# (opt-bisect-limit binary search + llvm-reduce on already-small inputs).
-# The generous ceiling accounts for API latency and verbose LLM reasoning.
-REDUCE_TIMEOUT = 1500
+# 30-minute timeout for reduction: bisect via opt-bisect-limit + llvm-reduce.
+# Margin for API latency, LLM reasoning, and large O2 pass pipelines.
+REDUCE_TIMEOUT = 1800
 VERIFY_TIMEOUT = 120
 # ACCEPTED RISK (F24): DAEMON_INTERVAL and ISSUES_PER_ROUND are hardcoded.
 # No environment variable override is provided for tuning poll frequency
