@@ -20,6 +20,7 @@ permission:
     "ls *": allow
     "diff *": allow
     "cmp *": allow
+    "python *": allow
 ---
 You are a metadata extractor for LLVM bug reports.
 
@@ -109,3 +110,5 @@ Write your findings to `extract.json`:
   "args": "",
   "oracle": ""
 }
+
+**After writing extract.json, self-validate:** run `python /llvm-autoreduce/scripts/verify-extract.py`. If it fails (exit ≠ 0), fix the issue: re-check the reproducer, re-run the oracle, correct the metadata. Re-run verify-extract.py until it passes, then STOP.

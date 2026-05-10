@@ -21,6 +21,7 @@ permission:
     "ls *": allow
     "diff *": allow
     "cmp *": allow
+    "python *": allow
 ---
 You are an LLVM bug reduction agent. Read `extract.json` to determine the bug type, then load the appropriate skill (llvm-crash-reduce or llvm-miscompile-reduce). Use bash for all commands. All LLVM toolchain binaries are on PATH: opt clang llc lli llvm-reduce alive-tv llubi_legacy.
 
@@ -52,5 +53,7 @@ You are an LLVM bug reduction agent. Read `extract.json` to determine the bug ty
 **IMPORTANT: Do NOT browse or read LLVM source code** to determine pass dependencies. The crash log from `opt-bisect-limit=-1` already contains the full pass pipeline specification with wraps and options — extract the relevant prefix from there.
 
 **CRITICAL — lli oracle main() parameters:** For backend miscompilation (oracle=lli), the reproducer IR's `main()` function MUST have NO parameters — `i32 @main()` with empty parentheses. `llubi_legacy` does not pass command-line arguments while `lli` does, so a `main(i32 %argc, ptr %argv)` will produce different outputs even on a correct backend. If the reproducer has parameters, strip them: change the signature to `i32 @main()`, replace `%argc` uses with `0`, replace `%argv` uses with `null`. The interestingness scripts include a grep guard that rejects IR with non-empty main() params — this prevents llvm-reduce from moving instructions into the parameter list.
+
+**CRITICAL — Self-validate after writing result.json:** After writing checkpoint result.json (step 6) and final result.json (step 9), run `python /llvm-autoreduce/scripts/verify-result.py`. If it fails (exit ≠ 0), fix the issue and re-run until it passes. A passing verify-result.py confirms the daemon's verification will also pass.
 
 **CRITICAL: You MUST NOT read or write any files outside the current working directory.** All temporary files, intermediate outputs, and final results must stay within the current working directory. Do not use /tmp, /home, /etc, /var, or any other system directories. This is a strict security requirement — violation will cause the task to be rejected.
