@@ -14,7 +14,7 @@ All LLVM tools are on PATH: `opt`, `llc`, `lli`, `llvm-reduce`, `clang`, `alive-
 
 ### 0. Read metadata from extract.json
 Read `extract.json` and note:
-- `pipeline` — the pipeline string from the issue (e.g. `-passes='default<O2>'`).
+- `args` — the opt/llc arguments from the issue (e.g. `-passes='default<O2>'`).
 - `reproducer_file` — the `.ll` file to reduce.
 
 Create a symlink for convenience so all scripts can use `repro.ll`:

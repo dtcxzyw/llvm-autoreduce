@@ -277,13 +277,16 @@ def _validate_meta(meta):
     bug_type = meta.get("type", "")
     if bug_type not in VALID_BUG_TYPES:
         raise ValueError(f"extract.json type not in {VALID_BUG_TYPES}: {bug_type!r}")
+    oracle = meta.get("oracle", "")
+    if oracle not in ("opt", "llc"):
+        raise ValueError(f"extract.json oracle must be opt or llc: {oracle!r}")
     reproducer = meta.get("reproducer_file", "")
     if reproducer and ("/" in reproducer or "\\" in reproducer or "\0" in reproducer):
         raise ValueError(f"extract.json reproducer_file contains path separators: {reproducer!r}")
-    _pipeline = meta.get("pipeline", "")
-    # Pipeline string passes through to the reducer agent's prompt — the
+    _args = meta.get("args", "")
+    # args string passes through to the reducer agent's prompt — the
     # extractor agent produces it and the reducer agent uses it. Both agents
-    # are trusted oracles; the daemon does not validate pipeline contents.
+    # are trusted oracles; the daemon does not validate args contents.
     # Path traversal on reproducer_file is validated because the daemon
     # writes those files itself.
     crash_pattern = meta.get("crash_pattern", "")
@@ -811,8 +814,8 @@ def _generate_report(meta, result, workdir_path, issue_id):
     # pipeline and crash_pattern are inserted into inline markdown code
     # spans; the reducer agent produces well-formed strings — agent
     # output is trusted.
-    reduced_pipeline = result.get("args", meta.get("pipeline", ""))
-    lines.append(f"**Pipeline:** `{reduced_pipeline}`")
+    reduced_args = result.get("args", meta.get("args", ""))
+    lines.append(f"**Pipeline:** `{reduced_args}`")
 
     oracle = result.get("oracle", "")
     if oracle:
@@ -1068,17 +1071,22 @@ def reprocess_issue(issue):
         "running any LLVM optimization passes:\n"
         "   clang -x c -O2 -Xclang -disable-llvm-passes -S -emit-llvm source.c -o reproducer.ll\n"
         "If the reproducer is already .ll, use it directly.\n"
-        "2. clang is ONLY used to generate IR — NEVER compile C to a native binary. "
-        "All bug verification MUST use opt + oracle (llubi_legacy or lli) on IR:\n"
-        "   - Crash: opt -passes='<pipeline>' reproducer.ll -o /dev/null 2>&1 | grep -qF '<pattern>'\n"
-        "   - Miscompilation: opt -passes='<pipeline>' reproducer.ll -S | "
-        "llubi_legacy --reduce-mode --max-steps 1000000 -; compare with reference\n"
-        "3. CRITICAL: The moment you have reproduced the bug, write extract.json and "
+        "2. Determine the oracle: 'opt' for opt/llvm-reduce bugs (middle-end), "
+        "'llc' for llc/backend bugs. clang is ONLY used for IR generation — "
+        "NEVER compile C to a native binary.\n"
+        "3. Reproduce the bug ONCE:\n"
+        "   - Crash (oracle=opt): opt <args> reproducer.ll -o /dev/null 2>&1 | grep -qF '<pattern>'\n"
+        "   - Crash (oracle=llc): llc <args> reproducer.ll -o /dev/null 2>&1 | grep -qF '<pattern>'\n"
+        "   - Miscompilation (oracle=opt): llubi_legacy --reduce-mode reproducer.ll > ref; "
+        "opt <args> reproducer.ll -S | llubi_legacy --reduce-mode -; outputs must differ\n"
+        "   - Miscompilation (oracle=llc): llubi_legacy --reduce-mode reproducer.ll > ref; "
+        "lli reproducer.ll > test; ref and test must differ (backend miscompilation)\n"
+        "4. CRITICAL: The moment you have reproduced the bug, write extract.json and "
         "STOP. Do NOT run more commands. Do NOT read IR files. "
-        "If NOT reproduced after ONE pipeline attempt, try ONE variation.\n\n"
+        "If NOT reproduced after ONE attempt, try ONE variation.\n\n"
         "extract.json schema:\n"
         '{"type": "crash|miscompilation", "reproducer_file": "<filename>", '
-        '"pipeline": "<opt arguments that trigger the bug>", '
+        '"args": "<opt/llc arguments>", "oracle": "opt|llc", '
         '"crash_pattern": "<literal substring from crash output, empty for miscompilation>"}'
     )
     ok = opencode.run(

@@ -15,7 +15,7 @@ All LLVM tools are on PATH: `opt`, `llc`, `lli`, `llvm-reduce`, `clang`, `alive-
 ### 1. Read metadata from extract.json
 Read `extract.json` and note:
 - `crash_pattern` — the literal crash signature substring (plain text, not regex). Use this directly; do not re-extract.
-- `pipeline` — the pipeline string from the issue or `-passes='default<O2>'` as fallback.
+- `args` — the opt/llc arguments from the issue or `-passes='default<O2>'` as fallback.
 - `reproducer_file` — the `.ll` file to reduce.
 
 ### 2. Reproduce the crash
