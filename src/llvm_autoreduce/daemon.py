@@ -943,17 +943,17 @@ def _generate_report(meta, result, workdir_path, issue_id):
     lines.append("## Reduced IR")
     lines.append("")
 
-    # For crash and mid-end miscompilation, prepend an invocation comment.
+    # Prepend an invocation comment showing the tool + args that trigger the bug.
     args = result.get("args", "")
     invocation = None
     if bug_type == "crash":
         invocation = f"; {oracle} {args} {ir_file}".rstrip()
-        if args:
-            invocation = " ".join(invocation.split())
     elif oracle in ("llubi", "alive2"):
         invocation = f"; opt {args} {ir_file}".rstrip()
-        if args:
-            invocation = " ".join(invocation.split())
+    elif oracle == "lli":
+        invocation = f"; lli {args} {ir_file}".rstrip()
+    if invocation:
+        invocation = " ".join(invocation.split())
 
     # ACCEPTED RISK: Reduced IR content is inserted verbatim into a markdown
     # code fence. If the IR contains triple backticks the code block may break.
