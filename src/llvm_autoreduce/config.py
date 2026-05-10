@@ -37,11 +37,17 @@ DAEMON_INTERVAL = 1800
 
 ISSUES_PER_ROUND = 20
 
-# Issues carrying any of these labels are skipped — they are known non-bug
-# categories. The daemon only excludes based on label presence, never on
-# label absence (unlabeled issues are still processed).
-SKIP_LABELS = frozenset(
+# Labels whose prefix matches any entry in this set are skipped.
+# Each entry is a lowercase string; a label is excluded if it starts with
+# (i.e. has the prefix of) any entry. This covers both exact-match labels
+# (e.g. "invalid") and namespace labels (e.g. "clang:" matches
+# "clang:frontend", "clang:codegen", etc.). Backend-related labels
+# (backend:*, llvm:selectiondag, llvm:globalisel, llvm:regalloc,
+# llvm:codegen) are intentionally NOT excluded — they are legitimate
+# bug categories for this daemon.
+SKIP_LABEL_PREFIXES = frozenset(
     {
+        # Non-bug categories (carried over from old SKIP_LABELS)
         "question",
         "feature request",
         "feature-request",
@@ -49,5 +55,29 @@ SKIP_LABELS = frozenset(
         "duplicate",
         "invalid",
         "wontfix",
+        # Clang tooling (not LLVM core bugs)
+        # NOTE: "clang:" prefix is intentionally excluded — Clang IRGen
+        # bugs (clang:codegen) produce miscompiled LLVM IR and are
+        # legitimate targets for the daemon.
+        "clang-tidy",
+        "clang-format",
+        "clangd",
+        "check-request",
+        # Non-LLVM subprojects
+        "mlir",
+        "flang",
+        "lld:",
+        "lldb",
+        "libc++",
+        "polly",
+        "tablegen",
+        "bolt",
+        "mc",
+        "pgo",
+        "tools:",
+        # Other excluded categories
+        "undefined behavior",
+        "llvm-reduce",
+        "coroutines",
     }
 )

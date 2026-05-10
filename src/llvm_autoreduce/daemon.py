@@ -873,12 +873,15 @@ def reprocess_issue(issue):
     if is_processed(issue_id):
         return
 
-    # Label-based exclusion: skip issues tagged with known non-bug labels
-    # (question, feature request, documentation, etc.). Unlabeled issues
-    # are still processed — the daemon never excludes based on label absence.
+    # Label-based exclusion: skip issues tagged with known non-bug labels.
+    # Uses prefix matching — a label is excluded if it starts with any
+    # entry in config.SKIP_LABEL_PREFIXES. This covers exact-match labels
+    # (e.g. "invalid") and namespace labels (e.g. "clang-tidy").
+    # Unlabeled issues are still processed.
     issue_labels = {lbl["name"].lower() for lbl in issue.get("labels", [])}
-    if issue_labels & config.SKIP_LABELS:
-        matched = issue_labels & config.SKIP_LABELS
+    matched = {lbl for lbl in issue_labels
+               for pfx in config.SKIP_LABEL_PREFIXES if lbl.startswith(pfx)}
+    if matched:
         log.info("issue=%d skipped: label match %s", issue_id, matched)
         mark_dropped(issue_id, "label_skip")
         mark_processed(issue_id)
