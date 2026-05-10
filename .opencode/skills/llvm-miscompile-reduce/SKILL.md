@@ -110,10 +110,10 @@ SCRIPT
 ```bash
 cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
-set -eo pipefail
-timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt
+set -o pipefail
+timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt || exit 1
 timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 -
-# Pipeline fails → non-zero exit; test $? -ne 0 → exit 0 (interesting)
+# Pipeline failed → exit code ≠ 0 → $? test succeeds → exit 0 (interesting)
 test $? -ne 0
 SCRIPT
 ```
@@ -122,10 +122,10 @@ SCRIPT
 ```bash
 cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
-set -eo pipefail
-timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt
+set -o pipefail
+timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt || exit 1
 timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 -
-# Timeout → exit 124; test 124 -eq 124 → exit 0 (interesting)
+# Pipeline timed out → exit 124
 test $? -eq 124
 SCRIPT
 ```
@@ -146,10 +146,10 @@ SCRIPT
 ```bash
 cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
-set -eo pipefail
-timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt
+set -o pipefail
+timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt || exit 1
 timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 lli -
-# Pipeline fails → non-zero exit
+# Pipeline failed → exit code ≠ 0
 test $? -ne 0
 SCRIPT
 ```
@@ -158,10 +158,10 @@ SCRIPT
 ```bash
 cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
-set -eo pipefail
-timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt
+set -o pipefail
+timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt || exit 1
 timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 lli -
-# Timeout → exit 124
+# Pipeline timed out → exit 124
 test $? -eq 124
 SCRIPT
 ```
