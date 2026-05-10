@@ -910,12 +910,9 @@ def _generate_report(meta, result, workdir_path, issue_id):
     lines.append(f"# Reduced reproducer for llvm/llvm-project#{issue_id}")
     lines.append("")
     lines.append(f"**Bug type:** {bug_type}")
-    # pipeline and pattern are inserted into inline markdown code
-    # spans; the reducer agent produces well-formed strings — agent
-    # output is trusted.
-    reduced_args = result.get("args", meta.get("args", ""))
-    lines.append(f"**Pipeline:** `{reduced_args}`")
-
+    # pattern is inserted into inline markdown code spans; the
+    # reducer agent produces well-formed strings — agent output
+    # is trusted.
     oracle = result.get("oracle", "")
     if oracle:
         lines.append(f"**Oracle:** {oracle}")
@@ -945,12 +942,23 @@ def _generate_report(meta, result, workdir_path, issue_id):
     lines.append("")
     lines.append("## Reduced IR")
     lines.append("")
+
+    # For crash and mid-end miscompilation, prepend an invocation comment.
+    args = result.get("args", "")
+    invocation = None
+    if bug_type == "crash" or oracle in ("llubi", "alive2"):
+        invocation = f"; opt {args} {ir_file}".rstrip()
+        if args:
+            invocation = " ".join(invocation.split())  # normalize whitespace
+
     # ACCEPTED RISK: Reduced IR content is inserted verbatim into a markdown
     # code fence. If the IR contains triple backticks the code block may break.
     # The IR is agent-generated from llvm-reduce output — the agent is trusted
     # to produce well-formed, benign content, and in practice reduced IR rarely
     # contains backtick sequences that would corrupt the markdown structure.
     lines.append("```llvm")
+    if invocation:
+        lines.append(invocation)
     lines.append(ir_content)
     lines.append("```")
 
@@ -992,11 +1000,13 @@ def _generate_report(meta, result, workdir_path, issue_id):
         elif oracle == "lli":
             lli_args = result.get("lli_args", "")
             llubi_args = result.get("llubi_args", "--reduce-mode --max-steps 1000000")
+            lli_cmd = f"lli {lli_args} {ir_file}".strip()
+            lli_cmd = " ".join(lli_cmd.split())
             lines.append("```bash")
             lines.append("# Reference:")
             lines.append(f"llubi_legacy {llubi_args} {ir_file}")
             lines.append("# Transformed (incorrect, via backend):")
-            lines.append(f"opt {args} {ir_file} -S > __reduced_opt.ll && lli {lli_args} __reduced_opt.ll")
+            lines.append(lli_cmd)
             lines.append("```")
 
     return "\n".join(lines)
