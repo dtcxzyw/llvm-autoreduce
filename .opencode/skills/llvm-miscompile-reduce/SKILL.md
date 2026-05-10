@@ -14,108 +14,71 @@ All LLVM tools are on PATH: `opt`, `llc`, `lli`, `llvm-reduce`, `clang`, `alive-
 
 ### 0. Read metadata from extract.json
 Read `extract.json` and note:
-- `args` — the opt/llc arguments from the issue (e.g. `-passes='default<O2>'`).
+- `oracle` — `opt` for middle-end, `llc` for backend.
+- `args` — the opt/llc arguments (e.g. `-passes='default<O2>'`).
 - `reproducer_file` — the `.ll` file to reduce.
 
-Create a symlink for convenience so all scripts can use `repro.ll`:
+Create a symlink for convenience:
 ```
 ln -sf <reproducer_file> repro.ll
 ```
 
-### 1. Reproduce with oracle
+### 1. Choose bisect/reduce oracle
 
-First, confirm the miscompilation is reproducible. **Always try alive-tv first for middle-end bugs. Fall back to llubi_legacy if alive-tv is inconclusive.**
+Based on `extract.json` oracle:
+- `oracle=opt` (middle-end) → use **llubi_legacy** for bisect and reduce
+- `oracle=llc` (backend) → use **lli** for bisect and reduce (with llubi_legacy as reference)
 
-**alive-tv (preferred for middle-end, function pass bugs):**
-```
-opt -passes='<pipeline>' repro.ll -S > step.ll
-alive-tv --disable-undef-input --smt-to=10000 repro.ll step.ll
-```
-Check the output:
-- "incorrect transformation" count > 0 or "ERROR: Value mismatch" → transformation is incorrect (confirmed miscompilation)
-- Both "0 incorrect transformations" **and** "Transformation seems to be correct!" present → correct (not a bug)
-- "Alive2 approximated the semantics of the programs" → **NOT a miscompilation** (approximation, skip alive2 for this issue)
-- Error about unsupported intrinsic/function → **NOT a valid alive2 match** (skip alive2)
+**CRITICAL — lli preprocessing:** Before using the `lli` oracle, preprocess the IR to remove `main()` argument dependencies. If `main()` uses `argc`/`argv`, strip those references from the IR (e.g., replace `argc` with a constant). Without this, `llubi_legacy` and `lli` may produce different output even on a correct backend because `llubi_legacy` does not pass command-line arguments.
 
-**llubi_legacy (fallback):**
+### 2. Reproduce the miscompilation
+
+**Middle-end (llubi):**
 ```
 set -o pipefail
 timeout 60 llubi_legacy --reduce-mode --max-steps 1000000 repro.ll > ref_ubi
-! opt -passes='<pipeline>' repro.ll -S | llubi_legacy --reduce-mode --max-steps 1000000 - | diff -q ref_ubi -
+! opt -passes='<args>' repro.ll -S | llubi_legacy --reduce-mode --max-steps 1000000 - | diff -q ref_ubi -
 ```
-**ACCEPTED RISK:** Crashes in the pipeline (opt or llubi_legacy segfault) are treated as miscompilation: `pipefail` makes the pipeline exit non-zero on crash, `!` inverts that to exit 0 ("miscompilation found"). This affects both the reproduction check and the bisect step — a buggy pass that crashes will be incorrectly selected as the miscompilation trigger. The daemon's final `verify()` step independently checks the reduced IR and will reject cases where the miscompilation does not actually reproduce, so a crash-confused reduction is caught at verification time.
-If no diff: not reproducible. If diff: proceed to bisect.
-
-**lli (backend miscompilation):**
-Use `lli` only when the bug is in backend codegen/instruction selection. llubi_legacy provides the reference semantics, lli runs through the JIT backend — differing outputs indicate a backend miscompilation.
-
-**CRITICAL — lli preprocessing:** Before using the `lli` oracle, preprocess the IR to remove `main()` argument dependencies. If `main()` uses `argc`/`argv`, strip those references from the IR (e.g., replace `argc` with a constant, or remove the argument-using code path). Without this preprocessing, `llubi_legacy` and `lli` may produce different output even on a correct backend because `llubi_legacy` does not pass command-line arguments.
-
+**Backend (lli):**
 ```
 set -o pipefail
 timeout 60 llubi_legacy --reduce-mode --max-steps 1000000 repro.ll > ref_ubi
-! opt -passes='<pipeline>' repro.ll -S | lli - | diff -q ref_ubi -
+! opt -passes='<args>' repro.ll -S | lli - | diff -q ref_ubi -
 ```
-**ACCEPTED RISK:** Crash → miscompilation. Same `!` + `pipefail` inversion as llubi reproduction.
-If no diff: not reproducible. If diff: proceed to bisect.
-
-### 2. Choose oracle
-
-**Preference order for middle-end:** alive-tv > llubi_legacy.
-Use the **first** oracle that confirmed the miscompilation in step 1. Default for middle-end: alive-tv. The reducer agent chooses the oracle — the daemon does not second-guess this choice.
+**ACCEPTED RISK:** Crashes in the pipeline (opt, llubi_legacy, or lli segfault) are treated as miscompilation: `pipefail` makes the pipeline exit non-zero on crash, `!` inverts that to exit 0 ("miscompilation found"). The daemon's final `verify()` step independently checks the reduced IR and will reject cases where the miscompilation does not actually reproduce, so a crash-confused reduction is caught at verification time.
 
 ### 3. opt-bisect-limit binary search to find single pass
 
-**Goal: identify the single pass that introduces the miscompilation, not just the point in a pipeline.**
+**Goal: identify the single pass that introduces the miscompilation.**
 
-First, get the total pass count:
-```
-timeout 60 opt -opt-bisect-limit=-1 -passes='<pipeline>' repro.ll -S -o /dev/null 2>&1   → total=N
-```
-
-**IMPORTANT: Use `set -o pipefail` for all bisect comparisons.** Without pipefail, if the oracle crashes (e.g., llubi_legacy segfaults), the empty output will be mistaken for a miscompilation. Note: even with pipefail, a crash is still treated as miscompilation because `!` inverts the non-zero pipeline exit to 0 (see ACCEPTED RISK annotations on the crash rows below).
-
-Pre-compute the reference output once (same for all bisect iterations):
+First, pre-compute the reference output and get total pass count:
 ```
 timeout 60 llubi_legacy --reduce-mode --max-steps 1000000 repro.ll > ref_ubi
+timeout 60 opt -opt-bisect-limit=-1 -passes='<args>' repro.ll -S -o /dev/null 2>&1   → total=N
 ```
 
-**llubi_legacy oracle — bisect:**
-Binary search lo=1, hi=N:
+**Middle-end (llubi oracle) — binary search lo=1, hi=N:**
 ```
-set -o pipefail
-! opt -opt-bisect-limit=M -passes='<pipeline>' repro.ll -S | llubi_legacy --reduce-mode --max-steps 1000000 - | diff -q ref_ubi -
-  same    → lo=M+1  (exit 1: not miscompiled)
-  diff    → hi=M    (exit 0: miscompilation found)
-  crash   → hi=M    (ACCEPTED RISK: pipefail non-zero exit is inverted by ! to exit 0 — crash is treated as miscompilation)
+while lo < hi:
+    M = (lo + hi) / 2
+    set -o pipefail
+    ! opt -opt-bisect-limit=M -passes='<args>' repro.ll -S | llubi_legacy --reduce-mode --max-steps 1000000 - | diff -q ref_ubi -
+      exit 0 (diff or crash) → miscompilation at or before M → hi=M
+      exit 1 (same output)   → correct up to M               → lo=M+1
 ```
-Converge to M (the first pass that introduces the miscompilation).
 
-**alive-tv oracle — bisect:**
-Binary search lo=1, hi=N:
+**Backend (lli oracle) — binary search lo=1, hi=N:**
 ```
-timeout 60 opt -opt-bisect-limit=M -passes='<pipeline>' repro.ll -S > step.ll
-alive-tv --disable-undef-input --smt-to=10000 repro.ll step.ll
+while lo < hi:
+    M = (lo + hi) / 2
+    set -o pipefail
+    ! opt -opt-bisect-limit=M -passes='<args>' repro.ll -S | lli - | diff -q ref_ubi -
+      exit 0 (diff or crash) → miscompilation at or before M → hi=M
+      exit 1 (same output)   → correct up to M               → lo=M+1
 ```
-Check the output:
-- Both "0 incorrect transformations" **and** "Transformation seems to be correct!" present → lo=M+1 (correct)
-- "incorrect transformation" count > 0 or "ERROR: Value mismatch" → hi=M (miscompilation found)
-- "Alive2 approximated" or unsupported intrinsic/function → inconclusive; treat as lo=M+1
+**ACCEPTED RISK:** Crash → miscompilation. `!` + `pipefail` inverts oracle/tool crashes to exit 0. The daemon's `verify()` step independently confirms.
 
-**lli oracle — bisect:**
-Pre-compute the reference output once:
-```
-timeout 60 llubi_legacy --reduce-mode --max-steps 1000000 repro.ll > ref_ubi
-```
-Binary search lo=1, hi=N:
-```
-set -o pipefail
-! opt -opt-bisect-limit=M -passes='<pipeline>' repro.ll -S | lli - | diff -q ref_ubi -
-  same    → lo=M+1
-  diff    → hi=M
-  crash   → hi=M    (ACCEPTED RISK: crash treated as miscompilation — same ! inversion as llubi bisect)
-```
-Converge to M.
+**IMPORTANT:** `diff -q` only compares exit code (0=same, 1=differ), no content output. `pipefail` prevents oracle crashes from producing empty output that would be mistaken for "same". The reference output is computed once, not inside the loop.
 
 ### 4. Extract the single pass name and capture IR before it
 
@@ -123,37 +86,14 @@ The bisect log prints the last pass run before the miscompilation (e.g. `BISECT:
 
 Capture the IR just before the bad pass:
 ```
-opt -opt-bisect-limit=M-1 -passes='<pipeline>' repro.ll -S > before.ll
+opt -opt-bisect-limit=M-1 -passes='<args>' repro.ll -S > before.ll
 ```
 
-### 5. Check pass type and extract single function (alive2 oracle)
+### 5. llvm-reduce with ONLY the single pass
 
-Determine if the buggy pass is a function pass. If YES, extract a single function for alive2 verification:
+**CRITICAL: The interestingness script must use only the single pass, NOT the full pipeline.**
 
-```
-llvm-extract -func=<function_name> before.ll -S -o single_func.ll
-```
-
-Test that the bug still reproduces on the single function with alive-tv. If it does, use `single_func.ll` as the reduction input for alive2 oracle. If not, use `before.ll` and llubi oracle.
-
-**Only use alive2 oracle for function pass bugs.** For module pass bugs (e.g. inliner, IPSCCP, globalopt), use llubi.
-
-### 6. llvm-reduce with ONLY the single pass
-
-**CRITICAL: The interestingness script must use only the single pass (`-passes=<pass_name>`), NOT the full pipeline.**
-
-**alive-tv oracle (function pass bugs):**
-```bash
-cat > interestingness.sh <<'SCRIPT'
-#!/bin/bash
-set -eo pipefail
-timeout 30 opt -passes='<pass_name>' "$1" -S > __opt.ll
-timeout 120 alive-tv --disable-undef-input --smt-to=10000 "$1" __opt.ll 2>&1 | grep -qE '[1-9][0-9]* incorrect transformation|ERROR: Value mismatch'
-SCRIPT
-```
-Note: `grep -qE` returns 0 (interesting=true) only when there is at least one incorrect transformation or a value mismatch. "0 incorrect transformations", "Transformation seems to be correct!", "Alive2 approximated the semantics", and unsupported intrinsic errors all return 1 (not interesting).
-
-**llubi_legacy oracle:**
+**llubi oracle (middle-end):**
 ```bash
 cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
@@ -162,9 +102,9 @@ timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt
 timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 - | ! diff -q _ref.txt -
 SCRIPT
 ```
-**ACCEPTED RISK:** Crash → interesting. `!` inverts the pipeline exit: if opt or llubi_legacy crashes, the `pipefail` pipeline exits non-zero, `!` flips it to 0 (interesting). The daemon's final verify step independently confirms the miscompilation and rejects crash-confused reductions.
+**ACCEPTED RISK:** Crash → interesting. `!` inverts the pipeline exit: if opt or llubi_legacy crashes, the `pipefail` pipeline exits non-zero, `!` flips it to 0 (interesting). The daemon's final verify step independently confirms and rejects crash-confused reductions.
 
-**lli oracle:**
+**lli oracle (backend):**
 ```bash
 cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
@@ -173,22 +113,22 @@ timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt
 timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 30 lli - | ! diff -q _ref.txt -
 SCRIPT
 ```
-**ACCEPTED RISK:** Crash → interesting. Same `!` + `pipefail` inversion as the llubi interestingness script.
+**ACCEPTED RISK:** Crash → interesting. Same `!` + `pipefail` inversion.
 
 Then:
 ```
 chmod +x interestingness.sh
-llvm-reduce --test=interestingness.sh <input>.ll
+llvm-reduce --test=interestingness.sh before.ll
 ```
 Output: `reduced.ll`
 
 If llvm-reduce gets stuck on a specific delta pass (check its progress output for a pass that keeps running without making progress), kill it and retry with `--skip-delta-passes=<pass_name>` (e.g. `--skip-delta-passes=instructions`). Repeat if it gets stuck on another pass.
 
-### 7. Write checkpoint result (REQUIRED)
+### 6. Write checkpoint result (REQUIRED)
 
-**CRITICAL: After llvm-reduce produces a working reduced.ll, write result.json IMMEDIATELY.** This saves a valid result before attempting optional manual reduction techniques. The daemon accepts this as a completed reduction even if manual steps run out of time.
+**CRITICAL: After llvm-reduce produces a working reduced.ll, write result.json IMMEDIATELY.** This saves a valid result before attempting optional oracle upgrades and manual reduction. The daemon accepts this as a completed reduction even if manual steps run out of time.
 
-Write result.json with the current oracle (llubi if alive-tv hasn't been confirmed yet):
+**Middle-end (llubi):**
 ```json
 {
   "type": "miscompilation",
@@ -202,13 +142,48 @@ Write result.json with the current oracle (llubi if alive-tv hasn't been confirm
 }
 ```
 
+**Backend (lli):**
+```json
+{
+  "type": "miscompilation",
+  "tool": "opt",
+  "args": "-passes=<pass_name>",
+  "ir_file": "reduced.ll",
+  "reference_file": "repro.ll",
+  "oracle": "lli",
+  "llubi_args": "--reduce-mode --max-steps 1000000",
+  "lli_args": ""
+}
+```
+
+### 7. Try alive2 upgrade (middle-end only, optional)
+
+For middle-end bugs with a function pass, try upgrading the oracle from llubi to alive2. This produces a stronger result.
+
+Determine if the buggy pass is a function pass. If YES, extract a single function:
+```
+llvm-extract -func=<function_name> before.ll -S -o single_func.ll
+```
+
+Test with alive-tv:
+```
+opt -passes='<pass_name>' single_func.ll -S > __opt.ll
+alive-tv --disable-undef-input --smt-to=10000 single_func.ll __opt.ll
+```
+
+Check the output:
+- "incorrect transformation" count > 0 or "ERROR: Value mismatch" → alive2 upgrade succeeded, update result.json with `oracle: "alive2"`, `alive2_args: "--disable-undef-input --smt-to=10000"`, `llubi_args: ""`.
+- "0 incorrect transformations" + "Transformation seems to be correct!" → no bug visible to alive2, keep llubi.
+- "Alive2 approximated the semantics" → **NOT a valid upgrade**, keep llubi.
+- Unsupported intrinsic/metadata/function → **NOT a valid upgrade**, keep llubi.
+
+**Only attempt alive2 for function pass bugs.** For module pass bugs (e.g. inliner, IPSCCP, globalopt), skip this step.
+
 ### 8. Additional manual reduction (optional — only if time permits)
 
-After writing the checkpoint result.json, try these techniques to produce a better result. If any succeeds, update result.json with the improved result.
+After the checkpoint result.json, try these techniques to shrink `reduced.ll` further. Test after each change that the miscompilation still reproduces. If any succeeds, update result.json with the improved `ir_file`.
 
-**Prefer alive-tv for function pass bugs.** After llvm-reduce, try these techniques on `reduced.ll` to shrink it further.
-
-**Reduce bitwidth:** Replace `i64` with smaller integer types (`i32`, `i16`, `i8`) where possible, and `i32` with `i16` or `i8`. Adjust constants accordingly.
+**Reduce bitwidth:** Replace `i64` with smaller integer types (`i32`, `i16`, `i8`) where possible. Adjust constants accordingly. Test that the miscompilation still reproduces.
 
 **Reduce pointer width:** In the target datalayout, change `p:64:64` to `p:32:32` (or lower). Update `target triple` to match (e.g. use a 32-bit target like `armv7-unknown-linux-gnueabihf`).
 
@@ -218,15 +193,15 @@ After writing the checkpoint result.json, try these techniques to produce a bett
 ```
 alive-tv --disable-undef-input --smt-to=10000 -src-unroll=4 -tgt-unroll=4 <src> <tgt>
 ```
-This unrolls loops in both source and target up to N iterations, allowing alive2 to analyze loop transformations.
+This unrolls loops in both source and target up to N iterations.
 
 **NEVER use undef.** Do not introduce `undef` or `poison` values — alive2 handles them differently and they can mask real bugs. Use concrete values instead.
 
-**Strip fast math flags.** If the IR contains `fast` or other fast-math flags on floating-point instructions, decompose `fast` into its constituent flags and keep only `nnan` and `ninf` — rewrite `fast` as `nnan ninf` explicitly. For any other fast-math flags (`nsz`, `arcp`, `contract`, `afn`, `reassoc`), remove them. If the miscompilation is specifically related to `nsz` (no-signed-zeros), prefer to drop `nsz` entirely rather than preserve it — a bug that only manifests with `nsz` is often not a real miscompilation.
+**Strip fast math flags.** If the IR contains `fast` or other fast-math flags on floating-point instructions, decompose `fast` into its constituent flags and keep only `nnan` and `ninf` — rewrite `fast` as `nnan ninf` explicitly. For any other fast-math flags (`nsz`, `arcp`, `contract`, `afn`, `reassoc`), remove them. If the miscompilation is specifically related to `nsz` (no-signed-zeros), prefer to drop `nsz` entirely rather than preserve it.
 
-### 9. Verify and write results
+### 9. Verify final result
 
-Verify the reduced IR still reproduces the miscompilation with the single pass.
+Verify the reduced IR still reproduces the miscompilation with the single pass. Write the final `result.json` (update from checkpoint if alive2 upgrade or manual reduction succeeded).
 
 **result.json (alive2):**
 ```json
@@ -241,7 +216,6 @@ Verify the reduced IR still reproduces the miscompilation with the single pass.
   "alive2_args": "--disable-undef-input --smt-to=10000"
 }
 ```
-The `args` field MUST be the single pass (e.g. `-passes=gvn`), not a full pipeline.
 
 **result.json (llubi):**
 ```json
@@ -257,7 +231,7 @@ The `args` field MUST be the single pass (e.g. `-passes=gvn`), not a full pipeli
 }
 ```
 
-**result.json (lli — backend miscompilation):**
+**result.json (lli — backend):**
 ```json
 {
   "type": "miscompilation",
@@ -272,9 +246,9 @@ The `args` field MUST be the single pass (e.g. `-passes=gvn`), not a full pipeli
 ```
 
 ## Error handling
-- Oracle crash on original IR: try the other oracle
+- Oracle crash on original IR: report in `error` field
 - If bisect cannot isolate a single pass: report the smallest pipeline possible in `args`
-- If alive2 reports approximation or unsupported intrinsics: fall back to llubi
+- If alive2 reports approximation or unsupported intrinsics: keep llubi, do NOT upgrade
 - If all reduction attempts fail, write `result.json` with the FULL schema plus an `error` field describing the reason. The daemon requires all schema fields to be present — a bare `{"error": "..."}` will fail validation. Use:
 ```json
 {
