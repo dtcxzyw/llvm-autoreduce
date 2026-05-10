@@ -1085,7 +1085,7 @@ def reprocess_issue(issue):
         agent="extractor",
         workdir=wd,
         prompt=extract_prompt,
-        timeout=config.REVIEW_TIMEOUT,
+        timeout=config.EXTRACT_TIMEOUT,
         shutdown_check=lambda: _shutdown_requested,
     )
     if not ok:

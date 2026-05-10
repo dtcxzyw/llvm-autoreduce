@@ -25,6 +25,9 @@ SOURCE_REPO = "llvm/llvm-project"
 TARGET_REPO = "dtcxzyw/llvm-autoreduce"
 
 REVIEW_TIMEOUT = 300
+# Extractor needs more time — it compiles C sources and runs toolchain
+# commands to reproduce the bug before classification.
+EXTRACT_TIMEOUT = 600
 # Single opencode reduction run typically completes in under 2 minutes
 # (opt-bisect-limit binary search + llvm-reduce on already-small inputs).
 # The generous ceiling accounts for API latency and verbose LLM reasoning.
