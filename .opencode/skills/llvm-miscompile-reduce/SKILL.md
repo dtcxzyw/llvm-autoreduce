@@ -17,6 +17,7 @@ Read `extract.json` and note:
 - `oracle` — `opt` for middle-end, `llc` for backend.
 - `args` — the opt/llc arguments (e.g. `-passes='default<O2>'`).
 - `reproducer_file` — the `.ll` file to reduce.
+- **`pattern`** — how the miscompilation manifests: `wrong_output`, `nonzero_exit`, or `infinite_loop`. The interestingness script MUST be written to preserve this exact pattern type — do NOT change wrong_output into a crash check or vice versa.
 
 Create a symlink for convenience:
 ```
@@ -91,29 +92,79 @@ opt -opt-bisect-limit=M-1 -passes='<args>' repro.ll -S > before.ll
 
 ### 5. llvm-reduce with ONLY the single pass
 
-**CRITICAL: The interestingness script must use only the single pass, NOT the full pipeline.**
+**CRITICAL: The interestingness script MUST match the pattern from extract.json.** Choose the template for the pattern type. Preserving the exact pattern type ensures the reduced IR manifests the same kind of miscompilation — wrong_output stays wrong_output, nonzero_exit stays nonzero_exit, infinite_loop stays infinite_loop.
 
-**llubi oracle (middle-end):**
+**llubi oracle (middle-end) — pattern=wrong_output:**
 ```bash
 cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
 set -eo pipefail
 timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt
-timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 - | ! diff -q _ref.txt -
+timeout 30 opt -passes='<pass_name>' "$1" -S > _opt.ll
+timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 _opt.ll > _out.txt
+! diff -q _ref.txt _out.txt
 SCRIPT
 ```
-**ACCEPTED RISK:** Crash → interesting. `!` inverts the pipeline exit: if opt or llubi_legacy crashes, the `pipefail` pipeline exits non-zero, `!` flips it to 0 (interesting). The daemon's final verify step independently confirms and rejects crash-confused reductions.
 
-**lli oracle (backend):**
+**llubi oracle (middle-end) — pattern=nonzero_exit:**
 ```bash
 cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
 set -eo pipefail
 timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt
-timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 30 lli - | ! diff -q _ref.txt -
+timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 -
+# Pipeline fails → non-zero exit; test $? -ne 0 → exit 0 (interesting)
+test $? -ne 0
 SCRIPT
 ```
-**ACCEPTED RISK:** Crash → interesting. Same `!` + `pipefail` inversion.
+
+**llubi oracle (middle-end) — pattern=infinite_loop:**
+```bash
+cat > interestingness.sh <<'SCRIPT'
+#!/bin/bash
+set -eo pipefail
+timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt
+timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 -
+# Timeout → exit 124; test 124 -eq 124 → exit 0 (interesting)
+test $? -eq 124
+SCRIPT
+```
+
+**lli oracle (backend) — pattern=wrong_output:**
+```bash
+cat > interestingness.sh <<'SCRIPT'
+#!/bin/bash
+set -eo pipefail
+timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt
+timeout 30 opt -passes='<pass_name>' "$1" -S > _opt.ll
+timeout 120 lli _opt.ll > _out.txt
+! diff -q _ref.txt _out.txt
+SCRIPT
+```
+
+**lli oracle (backend) — pattern=nonzero_exit:**
+```bash
+cat > interestingness.sh <<'SCRIPT'
+#!/bin/bash
+set -eo pipefail
+timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt
+timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 lli -
+# Pipeline fails → non-zero exit
+test $? -ne 0
+SCRIPT
+```
+
+**lli oracle (backend) — pattern=infinite_loop:**
+```bash
+cat > interestingness.sh <<'SCRIPT'
+#!/bin/bash
+set -eo pipefail
+timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt
+timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 lli -
+# Timeout → exit 124
+test $? -eq 124
+SCRIPT
+```
 
 Then:
 ```
