@@ -64,11 +64,13 @@ timeout 60 opt -opt-bisect-limit=-1 -passes='<args>' repro.ll -S -o /dev/null 2>
 ```bash
 cat > bisect.sh <<'SCRIPT'
 #!/bin/bash
-set -o pipefail
+set -e
 M="$1"
 ref="$2"
 ir="$3"
-! timeout 30 opt -opt-bisect-limit="$M" -passes='<args>' "$ir" -S | timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 - | diff -q "$ref" -
+timeout 30 opt -opt-bisect-limit="$M" -passes='<args>' "$ir" -S > _bisect_opt.ll
+timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 _bisect_opt.ll > _bisect_out.txt
+! diff -q "$ref" _bisect_out.txt
 SCRIPT
 chmod +x bisect.sh
 ```
@@ -80,19 +82,21 @@ Then binary search: `lo=1`, `hi=N`. At each step run `bisect.sh M ref_ubi repro.
 ```bash
 cat > bisect.sh <<'SCRIPT'
 #!/bin/bash
-set -o pipefail
+set -e
 M="$1"
 ref="$2"
 ir="$3"
-! timeout 30 opt -opt-bisect-limit="$M" "$ir" -S | timeout 10 lli - | diff -q "$ref" -
+timeout 30 opt -opt-bisect-limit="$M" -passes='<args>' "$ir" -S > _bisect_opt.ll
+timeout 10 lli _bisect_opt.ll > _bisect_out.txt
+! diff -q "$ref" _bisect_out.txt
 SCRIPT
 chmod +x bisect.sh
 ```
 Then binary search, same as above.
 
-**ACCEPTED RISK:** Crash → miscompilation. `!` + `pipefail` inverts oracle/tool crashes to exit 0. The daemon's `verify()` step independently confirms.
+**ACCEPTED RISK:** Crash → miscompilation. `set -e` causes the script to exit non-zero if opt crashes, and `! diff -q` inverts: if oracle crashes, `diff` exits non-zero (ref exists, _bisect_out.txt missing/empty), `!` returns 0. The daemon's `verify()` step independently confirms.
 
-**IMPORTANT:** `diff -q` only compares exit code (0=same, 1=differ), no content output. `pipefail` prevents oracle crashes from producing empty output that would be mistaken for "same". The reference output is computed once, not inside the loop. The `timeout 30` on opt and `timeout 120` on the oracle inside the script prevent any single bisect step from hanging the entire binary search.
+**IMPORTANT:** `diff -q` only compares exit code (0=same, 1=differ), no content output. `set -e` exits early if opt fails (no _bisect_opt.ll). The reference output is computed once, not inside the loop. Each bisect step uses temp files, avoiding pipefail complexity.
 
 ### 4. Extract the single pass name and capture IR before it
 
