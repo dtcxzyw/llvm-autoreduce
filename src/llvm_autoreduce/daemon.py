@@ -682,6 +682,9 @@ def verify(result, workdir_path, meta):
     if result.get("oracle") == "alive2":
         return verify_alive2(result, workdir_path)
     if result.get("oracle") == "lli":
+        if not _check_main_no_params(result["ir_file"], workdir_path):
+            log.warning("verify: lli reduced IR main() has params")
+            return False
         return verify_lli(result, workdir_path, pattern)
     log.error("verify: cannot verify result with type=%r oracle=%r",
               result.get("type"), result.get("oracle"))
@@ -725,6 +728,24 @@ def verify_extract_consistency(meta, result, workdir_path):
     return True
 
 
+_MAIN_NO_PARAMS_RE = re.compile(r"define\s+\S+\s+@main\s*\(\s*\)")
+
+
+def _check_main_no_params(reproducer_file, workdir_path):
+    """Verify that main() has no parameters (required for backend miscompilation).
+
+    llubi_legacy and lli produce different output when main() uses argc/argv
+    because llubi_legacy does not pass command-line arguments. Backend
+    miscompilation reproducers MUST have `i32 @main()` with empty params.
+    """
+    safe_ir = _safe_relative(workdir_path, reproducer_file)
+    try:
+        content = workdir.read(safe_ir)
+    except (ValueError, OSError):
+        return False
+    return bool(_MAIN_NO_PARAMS_RE.search(content))
+
+
 def verify_extract(meta, workdir_path):
     """Independently reproduce the bug from extract.json metadata.
 
@@ -756,6 +777,13 @@ def verify_extract(meta, workdir_path):
         return verify_crash(result, workdir_path, pattern)
 
     if bug_type == "miscompilation":
+        # Backend miscompilation requires main() with no parameters —
+        # llubi_legacy and lli disagree on argc/argv.
+        if oracle == "llc":
+            reproducer = meta["reproducer_file"]
+            if not _check_main_no_params(reproducer, workdir_path):
+                log.warning("verify_extract: backend miscomp reproducer main() has params")
+                return False
         result = {
             "ir_file": meta["reproducer_file"],
             "args": args,

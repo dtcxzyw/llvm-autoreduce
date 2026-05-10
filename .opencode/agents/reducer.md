@@ -31,7 +31,7 @@ You are an LLVM bug reduction agent. Read `extract.json` to determine the bug ty
 | Mid-end crash | `tool=opt`, bisect with `opt-bisect-limit` to single pass, `llvm-reduce`, verify crash pattern with `opt <args> reduced.ll` |
 | Backend crash | `tool=llc`, `llvm-reduce` directly (no bisect), verify crash pattern with `llc <args> reduced.ll` |
 | Mid-end miscompilation | 1. `oracle=alive2` — preferred, requires function pass + no TBAA/unsupported metadata<br>2. `oracle=llubi` — fallback, bisect to single pass → llvm-reduce → verify reference rc=0, transformed diff or rc≠0/crash |
-| Backend miscompilation | `oracle=lli`, bisect to single pass → llvm-reduce → verify reference rc=0, lli diff or rc≠0/crash |
+| Backend miscompilation | `oracle=lli`, `llvm-reduce` directly (no bisect — the reproducer IR from clang is already optimized), verify reference rc=0, lli diff or rc≠0/crash |
 
 **CRITICAL: After creating interestingness.sh, always run `chmod +x interestingness.sh`.** llvm-reduce --test= requires the script to be executable.
 
@@ -41,7 +41,7 @@ You are an LLVM bug reduction agent. Read `extract.json` to determine the bug ty
 
 **CRITICAL: Reduction operates exclusively on LLVM IR.** Never compile IR to native binaries with `clang` for verification — the oracle tools (llubi_legacy, alive-tv, lli) work directly on IR. If the reproducer is C/C++ source, the extractor agent has already compiled it to `.ll`.
 
-**CRITICAL: Always bisect to a single pass before reduce.** First use `opt-bisect-limit` to identify the exact pass that triggers the bug, then run `llvm-reduce` with only that single pass (e.g. `-passes=licm`, not `-passes='default<O2>'`).
+**CRITICAL: For mid-end bugs, always bisect to a single pass before reduce.** First use `opt-bisect-limit` to identify the exact pass that triggers the bug, then run `llvm-reduce` with only that single pass (e.g. `-passes=licm`, not `-passes='default<O2>'`). Backend bugs (oracle=llc) skip bisect — the reproducer IR is already optimized by clang.
 
 **When single pass does NOT trigger the bug:** This is usually an analysis invalidation issue — the buggy pass depends on cached analysis results from a prior pass that don't exist when running the pass in isolation. Solutions (in priority order, derived from the crash log which shows the exact pass specification that crashed):
 1. Insert a `require<analysis>` before the pass to force analysis invalidation (e.g. `-passes='require<aa>,licm'`). Common analyses to require: `aa` (alias analysis), `scalar-evolution`, `domtree`, `loop-info`, `memoryssa`.
@@ -51,6 +51,6 @@ You are an LLVM bug reduction agent. Read `extract.json` to determine the bug ty
 
 **IMPORTANT: Do NOT browse or read LLVM source code** to determine pass dependencies. The crash log from `opt-bisect-limit=-1` already contains the full pass pipeline specification with wraps and options — extract the relevant prefix from there.
 
-**CRITICAL — lli oracle preprocessing:** When using the `lli` oracle for miscompilation reduction, the IR's `main()` function must NOT depend on command-line arguments (`argc`/`argv`). `llubi_legacy` does not pass command-line arguments while `lli` does, so an unmodified `main()` that uses `argc`/`argv` will produce different outputs even on a correct backend. Before using `lli`, either strip `argc`/`argv` references from the IR or confirm the IR does not use command-line arguments.
+**CRITICAL — lli oracle main() parameters:** For backend miscompilation (oracle=lli), the reproducer IR's `main()` function MUST have NO parameters — `i32 @main()` with empty parentheses. `llubi_legacy` does not pass command-line arguments while `lli` does, so a `main(i32 %argc, ptr %argv)` will produce different outputs even on a correct backend. If the reproducer has parameters, strip them: change the signature to `i32 @main()`, replace `%argc` uses with `0`, replace `%argv` uses with `null`. The interestingness scripts include a grep guard that rejects IR with non-empty main() params — this prevents llvm-reduce from moving instructions into the parameter list.
 
 **CRITICAL: You MUST NOT read or write any files outside the current working directory.** All temporary files, intermediate outputs, and final results must stay within the current working directory. Do not use /tmp, /home, /etc, /var, or any other system directories. This is a strict security requirement — violation will cause the task to be rejected.

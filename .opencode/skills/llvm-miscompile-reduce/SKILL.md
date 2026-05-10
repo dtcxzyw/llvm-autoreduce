@@ -155,6 +155,8 @@ SCRIPT
 cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
 set -eo pipefail
+# Reject IR where main() has parameters — llubi_legacy and lli disagree on argc/argv
+grep -qP 'define\s+\S+\s+@main\s*\(\s*\)' "$1" || exit 1
 timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt
 timeout 10 lli <args> "$1" > _out.txt
 ! diff -q _ref.txt _out.txt
@@ -166,6 +168,8 @@ SCRIPT
 cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
 set -o pipefail
+# Reject IR where main() has parameters — llubi_legacy and lli disagree on argc/argv
+grep -qP 'define\s+\S+\s+@main\s*\(\s*\)' "$1" || exit 1
 timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt || exit 1
 timeout 10 lli <args> "$1" > /dev/null
 ret=$?
@@ -179,6 +183,8 @@ SCRIPT
 cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
 set -o pipefail
+# Reject IR where main() has parameters — llubi_legacy and lli disagree on argc/argv
+grep -qP 'define\s+\S+\s+@main\s*\(\s*\)' "$1" || exit 1
 timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt || exit 1
 timeout 10 lli <args> "$1" > /dev/null
 ret=$?
