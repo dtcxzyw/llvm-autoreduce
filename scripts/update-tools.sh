@@ -43,6 +43,7 @@ checkout_and_build_alive2() {
     local hash="$1"
     git -C "$WORK_DIR/alive2-trunk" checkout "$hash"
     cmake -B "$WORK_DIR/alive2-trunk/build" \
+        -S "$WORK_DIR/alive2-trunk" \
         -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
         -DLLVM_DIR="$WORK_DIR/llvm-trunk/build/lib/cmake/llvm" \
@@ -54,6 +55,7 @@ checkout_and_build_llubi() {
     local hash="$1"
     git -C "$WORK_DIR/llubi-trunk" checkout "$hash"
     cmake -B "$WORK_DIR/llubi-trunk/build" \
+        -S "$WORK_DIR/llubi-trunk" \
         -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
         -DLLVM_DIR="$WORK_DIR/llvm-trunk/build/lib/cmake/llvm"
