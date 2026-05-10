@@ -808,6 +808,20 @@ def _generate_report(meta, result, workdir_path, issue_id):
         lines.append(f"**Crash pattern:** `{crash_pattern}`")
 
     lines.append("")
+    lines.append("## Toolchain")
+    lines.append("")
+    for name, repo in (("llvm", config.LLVM_TRUNK), ("alive2", config.ALIVE2_TRUNK), ("llubi", config.LLUBI_TRUNK)):
+        sha = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=10,
+        ).stdout.strip()
+        if sha:
+            lines.append(f"- **{name}:** `{sha[:12]}`")
+        else:
+            lines.append(f"- **{name}:** (unknown)")
+    lines.append("")
+
+    lines.append("")
     lines.append("## Reduced IR")
     lines.append("")
     # ACCEPTED RISK: Reduced IR content is inserted verbatim into a markdown
