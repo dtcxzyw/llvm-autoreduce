@@ -14,27 +14,35 @@ All LLVM tools are on PATH: `opt`, `llc`, `lli`, `llvm-reduce`, `clang`, `alive-
 
 ### 1. Read metadata from extract.json
 Read `extract.json` and note:
+- `oracle` — `opt` for middle-end crash, `llc` for backend crash.
 - `crash_pattern` — the literal crash signature substring (plain text, not regex). Use this directly; do not re-extract.
-- `args` — the opt/llc arguments from the issue or `-passes='default<O2>'` as fallback.
+- `args` — the opt/llc arguments from the issue or `-passes='default<O2>'` as fallback (empty for llc without extra flags).
 - `reproducer_file` — the `.ll` file to reduce.
 
 ### 2. Reproduce the crash
-Run the crash with the given pipeline to verify the reproducer still crashes and the crash_pattern matches:
-```
-opt -passes='<pipeline>' <reproducer_file> 2>&1 | grep -qF "<crash_pattern>"
-```
-For llc crashes: `llc <reproducer_file> 2>&1 | grep -qF "<crash_pattern>"`.
 
-### 3. opt-bisect-limit to identify the crashing pass (opt crashes only)
+Verify the crash still reproduces with the crash_pattern:
 
-For llc crashes, skip to step 5.
+**opt (middle-end):**
+```
+opt <args> reproducer.ll 2>&1 | grep -qF "<crash_pattern>"
+```
+
+**llc (backend):**
+```
+llc <args> reproducer.ll 2>&1 | grep -qF "<crash_pattern>"
+```
+
+### 3. opt-bisect-limit to identify the crashing pass
+
+**opt crashes only.** For llc crashes (oracle=llc), skip directly to step 5 — there is no opt-bisect-limit for llc.
 
 **Goal: identify the single pass that triggers the crash — one command, no binary search needed.**
 
 `opt-bisect-limit=-1` runs all passes without stopping, but logs each pass number and name. The crash happens at the last pass printed in the log. The pass number M from the log is the crashing pass.
 
 ```
-timeout 60 opt -opt-bisect-limit=-1 -passes='<pipeline>' reproducer.ll -S -o /dev/null 2>&1
+timeout 60 opt -opt-bisect-limit=-1 <args> reproducer.ll -S -o /dev/null 2>&1
 ```
 Look for the last line matching `BISECT: running pass (M) <PassName> on ...` before the crash output — that M is the crashing pass number.
 
@@ -44,7 +52,7 @@ The bisect log prints the pass name (e.g. `BISECT: running pass (N) InstCombine 
 
 Capture the IR just before the crashing pass:
 ```
-opt -opt-bisect-limit=M-1 -passes='<pipeline>' reproducer.ll -S > before.ll
+opt -opt-bisect-limit=M-1 <args> reproducer.ll -S > before.ll
 ```
 
 ### 5. Handle llc crashes
