@@ -1152,10 +1152,15 @@ def reprocess_issue(issue):
         shutdown_check=lambda: _shutdown_requested,
     )
     if not ok:
-        log.warning("issue=%d reduce agent failed", issue_id)
-        mark_dropped(issue_id, "reducer_agent_failed")
-        mark_processed(issue_id)
-        return
+        # If the reducer timed out but wrote a result.json (checkpoint
+        # from the skill's step 7), treat the reduction as successful.
+        if (wd / "result.json").exists():
+            log.info("issue=%d reducer timed out but result.json exists, continuing", issue_id)
+        else:
+            log.warning("issue=%d reduce agent failed", issue_id)
+            mark_dropped(issue_id, "reducer_agent_failed")
+            mark_processed(issue_id)
+            return
 
     result_path = wd / "result.json"
     if not result_path.exists():

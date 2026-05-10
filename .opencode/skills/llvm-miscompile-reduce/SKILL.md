@@ -184,9 +184,29 @@ Output: `reduced.ll`
 
 If llvm-reduce gets stuck on a specific delta pass (check its progress output for a pass that keeps running without making progress), kill it and retry with `--skip-delta-passes=<pass_name>` (e.g. `--skip-delta-passes=instructions`). Repeat if it gets stuck on another pass.
 
-### 7. Additional manual reduction (alive2 oracle)
+### 7. Write checkpoint result (REQUIRED)
 
-After llvm-reduce, try these techniques on `reduced.ll` to shrink it further. Test after each change that the miscompilation still reproduces with alive-tv.
+**CRITICAL: After llvm-reduce produces a working reduced.ll, write result.json IMMEDIATELY.** This saves a valid result before attempting optional manual reduction techniques. The daemon accepts this as a completed reduction even if manual steps run out of time.
+
+Write result.json with the current oracle (llubi if alive-tv hasn't been confirmed yet):
+```json
+{
+  "type": "miscompilation",
+  "tool": "opt",
+  "args": "-passes=<pass_name>",
+  "ir_file": "reduced.ll",
+  "reference_file": "repro.ll",
+  "oracle": "llubi",
+  "llubi_args": "--reduce-mode --max-steps 1000000",
+  "alive2_args": ""
+}
+```
+
+### 8. Additional manual reduction (optional — only if time permits)
+
+After writing the checkpoint result.json, try these techniques to produce a better result. If any succeeds, update result.json with the improved result.
+
+**Prefer alive-tv for function pass bugs.** After llvm-reduce, try these techniques on `reduced.ll` to shrink it further.
 
 **Reduce bitwidth:** Replace `i64` with smaller integer types (`i32`, `i16`, `i8`) where possible, and `i32` with `i16` or `i8`. Adjust constants accordingly.
 
@@ -204,7 +224,7 @@ This unrolls loops in both source and target up to N iterations, allowing alive2
 
 **Strip fast math flags.** If the IR contains `fast` or other fast-math flags on floating-point instructions, decompose `fast` into its constituent flags and keep only `nnan` and `ninf` — rewrite `fast` as `nnan ninf` explicitly. For any other fast-math flags (`nsz`, `arcp`, `contract`, `afn`, `reassoc`), remove them. If the miscompilation is specifically related to `nsz` (no-signed-zeros), prefer to drop `nsz` entirely rather than preserve it — a bug that only manifests with `nsz` is often not a real miscompilation.
 
-### 8. Verify and write results
+### 9. Verify and write results
 
 Verify the reduced IR still reproduces the miscompilation with the single pass.
 
