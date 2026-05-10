@@ -471,14 +471,32 @@ def verify_llubi(result, workdir_path, pattern=""):
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
         )
-        if test.returncode != 0:
-            # Crash / non-zero exit of the transformed llubi execution is a
-            # confirmed miscompilation — the target pass caused the oracle to
-            # crash or produce invalid output. The reference already passed.
+        test_crashed = test.returncode != 0
+        stdout_diff = ref.stdout != test.stdout
+
+        if pattern == "wrong_output":
+            if test_crashed:
+                log.error("llubi test crashed — expected wrong_output, pattern changed")
+                return False
+            return stdout_diff
+        if pattern == "nonzero_exit":
+            if test_crashed:
+                log.info("llubi test crashed (signal=%d) — confirmed nonzero_exit",
+                         -test.returncode if test.returncode < 0 else test.returncode)
+                return True
+            log.error("llubi test exited 0 — expected nonzero_exit, pattern changed")
+            return False
+        if pattern == "infinite_loop":
+            # infinite_loop is handled by TimeoutExpired above — if we reach
+            # here the process exited normally, which is NOT infinite_loop.
+            log.error("llubi test exited — expected infinite_loop")
+            return False
+        # No pattern specified: accept any miscompilation signal.
+        if test_crashed:
             log.info("llubi test crashed (signal=%d) — confirmed miscompilation",
                      -test.returncode if test.returncode < 0 else test.returncode)
             return True
-        return ref.stdout != test.stdout
+        return stdout_diff
     except subprocess.TimeoutExpired:
         if pattern == "infinite_loop":
             log.info("verify llubi timeout — confirmed infinite loop")
@@ -613,14 +631,30 @@ def verify_lli(result, workdir_path, pattern=""):
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
         )
-        if test.returncode != 0:
-            # Crash / non-zero exit of the lli JIT execution is a confirmed
-            # backend miscompilation — the JIT produced invalid code or crashed.
-            # The llubi reference already passed.
+        test_crashed = test.returncode != 0
+        stdout_diff = ref.stdout != test.stdout
+
+        if pattern == "wrong_output":
+            if test_crashed:
+                log.error("lli test crashed — expected wrong_output, pattern changed")
+                return False
+            return stdout_diff
+        if pattern == "nonzero_exit":
+            if test_crashed:
+                log.info("lli test crashed (signal=%d) — confirmed nonzero_exit",
+                         -test.returncode if test.returncode < 0 else test.returncode)
+                return True
+            log.error("lli test exited 0 — expected nonzero_exit, pattern changed")
+            return False
+        if pattern == "infinite_loop":
+            log.error("lli test exited — expected infinite_loop")
+            return False
+        # No pattern specified: accept any miscompilation signal.
+        if test_crashed:
             log.info("lli test crashed (signal=%d) — confirmed backend miscompilation",
                      -test.returncode if test.returncode < 0 else test.returncode)
             return True
-        return ref.stdout != test.stdout
+        return stdout_diff
     except subprocess.TimeoutExpired:
         if pattern == "infinite_loop":
             log.info("verify lli timeout — confirmed infinite loop")
