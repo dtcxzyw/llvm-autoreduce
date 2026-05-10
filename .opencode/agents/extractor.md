@@ -30,7 +30,7 @@ You are a metadata extractor for LLVM bug reports.
 | Mid-end crash | `opt` | `opt <args> reproducer.ll` crashes. Extract a literal substring from stderr as `crash_pattern`. |
 | Backend crash | `llc` | `llc <args> reproducer.ll` crashes. Extract a literal substring from stderr as `crash_pattern`. |
 | Mid-end miscompilation | `opt` | `llubi_legacy reproducer.ll` as reference (MUST exit 0). `opt <args> reproducer.ll \| llubi_legacy` as transformed. Confirmed if stdout differs **or** transformed rc≠0/crash. |
-| Backend miscompilation | `llc` | `llubi_legacy reproducer.ll` as reference (MUST exit 0). `lli reproducer.ll` as JIT output. Confirmed if stdout differs **or** lli rc≠0/crash. |
+| Backend miscompilation | `llc` | `llubi_legacy reproducer.ll` as reference (MUST exit 0). Mid-end correct (ref = `opt <args> reproducer.ll \| llubi_legacy`). Generate `clang -O2 -S -emit-llvm source.c -o full_opt.ll` (no `-disable-llvm-passes`), then `lli full_opt.ll` — confirmed if stdout differs **or** lli rc≠0/crash. |
 
 If none of the above match, classify as `type: "unrelated"`.
 
