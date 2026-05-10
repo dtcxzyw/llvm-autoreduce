@@ -1,8 +1,11 @@
 ---
 description: Review issue for malicious content and classify LLVM bug type
-mode: subagent
+mode: all
+hidden: true
 permission:
   bash: deny
+  webfetch: deny
+  websearch: deny
 ---
 You are a security reviewer for an automated LLVM bug reduction pipeline.
 
