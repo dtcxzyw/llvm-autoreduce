@@ -388,7 +388,7 @@ def verify_llubi(result, workdir_path):
     safe_ir = _safe_relative(workdir_path, result["ir_file"])
     args = result.get("args", "")
     # llubi_args is produced by the reducer agent (trusted oracle).
-    llubi_args = result.get("llubi_args", "--max-steps 1000000")
+    llubi_args = result.get("llubi_args", "--reduce-mode --max-steps 1000000")
     # Use the built LLVM toolchain opt binary, never PATH.
     opt_path = str(config.LLVM_BIN / "opt")
     try:
@@ -543,7 +543,7 @@ def verify_lli(result, workdir_path):
     args = result.get("args", "")
     # lli_args and llubi_args are produced by the reducer agent (trusted oracle).
     lli_args = result.get("lli_args", "")
-    llubi_args = result.get("llubi_args", "--max-steps 1000000")
+    llubi_args = result.get("llubi_args", "--reduce-mode --max-steps 1000000")
     opt_path = str(config.LLVM_BIN / "opt")
     lli_path = str(config.LLVM_BIN / "lli")
     try:
@@ -848,7 +848,7 @@ def _generate_report(meta, result, workdir_path, issue_id):
             lines.append(f"opt {args} {ir_file} -S > __reduced_opt.ll && alive-tv --disable-undef-input {alive2_args} {ir_file} __reduced_opt.ll")
             lines.append("```")
         elif oracle == "llubi":
-            llubi_args = result.get("llubi_args", "--max-steps 1000000")
+            llubi_args = result.get("llubi_args", "--reduce-mode --max-steps 1000000")
             lines.append("```bash")
             lines.append("# Reference:")
             lines.append(f"llubi_legacy {llubi_args} {ir_file}")
@@ -857,7 +857,7 @@ def _generate_report(meta, result, workdir_path, issue_id):
             lines.append("```")
         elif oracle == "lli":
             lli_args = result.get("lli_args", "")
-            llubi_args = result.get("llubi_args", "--max-steps 1000000")
+            llubi_args = result.get("llubi_args", "--reduce-mode --max-steps 1000000")
             lines.append("```bash")
             lines.append("# Reference:")
             lines.append(f"llubi_legacy {llubi_args} {ir_file}")
@@ -1035,7 +1035,7 @@ def reprocess_issue(issue):
         "   - Crash: run opt with the reported pipeline on reproducer.ll and capture "
         "the crash output (stderr). Verify the crash is reproducible.\n"
         "   - Miscompilation: run opt with the reported pipeline on reproducer.ll to "
-        "produce transformed IR, then compare llubi_legacy output (reference vs transformed). "
+        "produce transformed IR, then compare llubi_legacy --reduce-mode output (reference vs transformed). "
         "Verify the outputs differ.\n"
         "3. If the bug does NOT reproduce with the reported pipeline, try at most "
         "ONE alternative (e.g. different optimization level or legacy pass manager).\n"

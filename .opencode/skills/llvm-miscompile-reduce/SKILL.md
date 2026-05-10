@@ -6,7 +6,7 @@ description: Reduce LLVM miscompilation reproducers — LLUBI/Alive2 oracle + op
 ## Tools
 All LLVM tools are on PATH: `opt`, `llc`, `lli`, `llvm-reduce`, `clang`, `alive-tv`, `llubi_legacy`.
 
-**Timeout rule: wrap every standalone `opt`, `llc`, `lli`, or `clang` command with `timeout 60`.** llubi_legacy `--max-steps 1000000` is sufficient. interestingness.sh commands already carry timeouts — no extra wrapping needed there.
+**Timeout rule: wrap every standalone `opt`, `llc`, `lli`, or `clang` command with `timeout 60`.** llubi_legacy `--reduce-mode --max-steps 1000000` is sufficient. interestingness.sh commands already carry timeouts — no extra wrapping needed there.
 
 ## Miscompilation Reduction Pipeline
 
@@ -29,8 +29,8 @@ First, confirm the miscompilation is reproducible with the oracle on the pipelin
 **llubi_legacy:**
 ```
 set -o pipefail
-timeout 60 llubi_legacy --max-steps 1000000 repro.ll > ref_ubi
-! opt -passes='<pipeline>' repro.ll -S | llubi_legacy --max-steps 1000000 - | diff -q ref_ubi -
+timeout 60 llubi_legacy --reduce-mode --max-steps 1000000 repro.ll > ref_ubi
+! opt -passes='<pipeline>' repro.ll -S | llubi_legacy --reduce-mode --max-steps 1000000 - | diff -q ref_ubi -
 ```
 **ACCEPTED RISK:** Crashes in the pipeline (opt or llubi_legacy segfault) are treated as miscompilation: `pipefail` makes the pipeline exit non-zero on crash, `!` inverts that to exit 0 ("miscompilation found"). This affects both the reproduction check and the bisect step — a buggy pass that crashes will be incorrectly selected as the miscompilation trigger. The daemon's final `verify()` step independently checks the reduced IR and will reject cases where the miscompilation does not actually reproduce, so a crash-confused reduction is caught at verification time.
 If no diff: not reproducible with llubi, try alive-tv. If diff: proceed to bisect.
@@ -54,7 +54,7 @@ Use `lli` only when the bug is in backend codegen/instruction selection. llubi_l
 
 ```
 set -o pipefail
-timeout 60 llubi_legacy --max-steps 1000000 repro.ll > ref_ubi
+timeout 60 llubi_legacy --reduce-mode --max-steps 1000000 repro.ll > ref_ubi
 ! opt -passes='<pipeline>' repro.ll -S | lli - | diff -q ref_ubi -
 ```
 **ACCEPTED RISK:** Crash → miscompilation. Same `!` + `pipefail` inversion as llubi reproduction (line 33). The daemon's verify step independently confirms the miscompilation.
@@ -77,14 +77,14 @@ timeout 60 opt -opt-bisect-limit=-1 -passes='<pipeline>' repro.ll -S -o /dev/nul
 
 Pre-compute the reference output once (same for all bisect iterations):
 ```
-timeout 60 llubi_legacy --max-steps 1000000 repro.ll > ref_ubi
+timeout 60 llubi_legacy --reduce-mode --max-steps 1000000 repro.ll > ref_ubi
 ```
 
 **llubi_legacy oracle — bisect:**
 Binary search lo=1, hi=N:
 ```
 set -o pipefail
-! opt -opt-bisect-limit=M -passes='<pipeline>' repro.ll -S | llubi_legacy --max-steps 1000000 - | diff -q ref_ubi -
+! opt -opt-bisect-limit=M -passes='<pipeline>' repro.ll -S | llubi_legacy --reduce-mode --max-steps 1000000 - | diff -q ref_ubi -
   same    → lo=M+1  (exit 1: not miscompiled)
   diff    → hi=M    (exit 0: miscompilation found)
   crash   → hi=M    (ACCEPTED RISK: pipefail non-zero exit is inverted by ! to exit 0 — crash is treated as miscompilation)
@@ -106,7 +106,7 @@ Check the output:
 **lli oracle — bisect:**
 Pre-compute the reference output once:
 ```
-timeout 60 llubi_legacy --max-steps 1000000 repro.ll > ref_ubi
+timeout 60 llubi_legacy --reduce-mode --max-steps 1000000 repro.ll > ref_ubi
 ```
 Binary search lo=1, hi=N:
 ```
@@ -136,8 +136,8 @@ opt -opt-bisect-limit=M-1 -passes='<pipeline>' repro.ll -S > before.ll
 cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
 set -eo pipefail
-timeout 120 llubi_legacy --max-steps 1000000 "$1" > _ref.txt
-timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 llubi_legacy --max-steps 1000000 - | ! diff -q _ref.txt -
+timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt
+timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 - | ! diff -q _ref.txt -
 SCRIPT
 ```
 **ACCEPTED RISK:** Crash → interesting. `!` inverts the pipeline exit: if opt or llubi_legacy crashes, the `pipefail` pipeline exits non-zero, `!` flips it to 0 (interesting). The daemon's final verify step independently confirms the miscompilation and rejects crash-confused reductions.
@@ -158,7 +158,7 @@ Note: `grep -qE` returns 0 (interesting=true) only when there is at least one in
 cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
 set -eo pipefail
-timeout 120 llubi_legacy --max-steps 1000000 "$1" > _ref.txt
+timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt
 timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 30 lli - | ! diff -q _ref.txt -
 SCRIPT
 ```
@@ -186,7 +186,7 @@ Verify the reduced IR still reproduces the miscompilation with the single pass.
   "ir_file": "reduced.ll",
   "reference_file": "repro.ll",
   "oracle": "llubi",
-  "llubi_args": "--max-steps 1000000",
+  "llubi_args": "--reduce-mode --max-steps 1000000",
   "alive2_args": "--smt-to=10000"
 }
 ```
@@ -201,7 +201,7 @@ The `args` field MUST be the single pass (e.g. `-passes=gvn`), not a full pipeli
   "ir_file": "reduced.ll",
   "reference_file": "repro.ll",
   "oracle": "lli",
-  "llubi_args": "--max-steps 1000000",
+  "llubi_args": "--reduce-mode --max-steps 1000000",
   "lli_args": ""
 }
 ```
@@ -218,7 +218,7 @@ The `args` field MUST be the single pass (e.g. `-passes=gvn`), not a full pipeli
   "ir_file": "error.ll",
   "reference_file": "repro.ll",
   "oracle": "llubi",
-  "llubi_args": "--max-steps 1000000",
+  "llubi_args": "--reduce-mode --max-steps 1000000",
   "alive2_args": "",
   "error": "brief description of what failed"
 }

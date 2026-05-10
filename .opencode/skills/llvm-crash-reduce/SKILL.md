@@ -6,7 +6,7 @@ description: Reduce LLVM crash reproducers — opt-bisect-limit to find pass, th
 ## Tools
 All LLVM tools are on PATH: `opt`, `llc`, `lli`, `llvm-reduce`, `clang`, `alive-tv`, `llubi_legacy`.
 
-**Timeout rule: wrap every standalone `opt`, `llc`, or `clang` command with `timeout 60`.** llubi_legacy `--max-steps 1000000` is sufficient. interestingness.sh commands already carry timeouts — no extra wrapping needed there.
+**Timeout rule: wrap every standalone `opt`, `llc`, or `clang` command with `timeout 60`.** llubi_legacy `--reduce-mode --max-steps 1000000` is sufficient. interestingness.sh commands already carry timeouts — no extra wrapping needed there.
 
 ## Crash Reduction Pipeline
 
