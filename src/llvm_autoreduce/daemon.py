@@ -971,6 +971,7 @@ def reprocess_issue(issue):
         workdir=wd,
         prompt=review_prompt,
         timeout=config.REVIEW_TIMEOUT,
+        shutdown_check=lambda: _shutdown_requested,
     )
     if not ok:
         log.warning("issue=%d review agent failed", issue_id)
@@ -1033,6 +1034,7 @@ def reprocess_issue(issue):
         workdir=wd,
         prompt=extract_prompt,
         timeout=config.REVIEW_TIMEOUT,
+        shutdown_check=lambda: _shutdown_requested,
     )
     if not ok:
         log.warning("issue=%d extractor agent failed", issue_id)
@@ -1100,6 +1102,7 @@ def reprocess_issue(issue):
         workdir=wd,
         prompt=reduce_prompt,
         timeout=config.REDUCE_TIMEOUT,
+        shutdown_check=lambda: _shutdown_requested,
     )
     if not ok:
         log.warning("issue=%d reduce agent failed", issue_id)
@@ -1270,14 +1273,11 @@ def main():
     # shutdown request. Log rotation tools that send SIGHUP will cause the
     # daemon to exit instead of reloading configuration.
     signal.signal(signal.SIGHUP, _handle_shutdown)
-    # ACCEPTED RISK (F41): Shutdown signal responsiveness is coarse — the
-    # daemon only checks _shutdown_requested at round boundaries and during
-    # the inter-round sleep loop (1-second granularity). Within a round the
-    # for-loop over issues does not check the flag, so a SIGTERM received
-    # mid-round must wait for all 20 issues to drain (worst case ~8 h). This
-    # can exceed container orchestration grace periods (K8s default 30 s),
-    # resulting in SIGKILL. Adding a check between issues would reduce the
-    # worst-case delay to one issue (~25 min).
+    # Shutdown is checked at round boundaries, after every issue (1-issue
+    # granularity), and during every opencode agent invocation (1-second
+    # polling via shutdown_check in opencode.run). A SIGTERM/SIGINT received
+    # mid-issue terminates the current agent subprocess within 1 second,
+    # and the for-loop breaks immediately after the current issue completes.
 
     log.info("llvm-autoreduce daemon starting")
 
@@ -1313,6 +1313,9 @@ def main():
             issues = github.fetch_issues()
             log.info("round fetched %d issues", len(issues))
             for issue in issues:
+                if _shutdown_requested:
+                    log.info("shutdown requested mid-round, stopping")
+                    break
                 try:
                     reprocess_issue(issue)
                 except Exception:

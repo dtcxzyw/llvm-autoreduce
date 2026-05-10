@@ -5,6 +5,7 @@ import logging
 import os
 import resource
 import subprocess
+import time
 
 from .config import ALIVE2_BIN, LLUBI_BIN, LLVM_BIN
 
@@ -64,15 +65,16 @@ def _env():
     return env
 
 
-def run(agent, workdir, prompt, timeout):
+def run(agent, workdir, prompt, timeout, shutdown_check=None):
     log_path = workdir / "log.txt"
     # ACCEPTED RISK (F6): Model name is hardcoded — not configurable via
     # environment variable or config file.
     cmd = [
-        "opencode",
+        "opencode", "run",
         "--model", "deepseek/deepseek-v4-pro",
         "--agent", agent,
-        "--prompt", prompt,
+        "--format", "json",
+        prompt,
     ]
 
     # Pre-set RLIMIT_AS=8GB before fork so child inherits it; restore parent
@@ -101,10 +103,26 @@ def run(agent, workdir, prompt, timeout):
             with contextlib.suppress(ValueError, OSError):
                 resource.setrlimit(resource.RLIMIT_AS, old)
 
-    try:
-        proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.communicate()
+    deadline = time.time() + timeout
+    while True:
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            proc.kill()
+            proc.wait()
+            break
+        if shutdown_check and shutdown_check():
+            log.info("opencode shutdown requested, terminating agent=%s", agent)
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+            break
+        try:
+            proc.wait(timeout=min(remaining, 1))
+            break
+        except subprocess.TimeoutExpired:
+            continue
     log.info("opencode done agent=%s exit=%d", agent, proc.returncode)
     return proc.returncode == 0
