@@ -1227,7 +1227,7 @@ def reprocess_issue(issue):
         "5. CRITICAL: The moment you have reproduced the bug, write extract.json and "
         "STOP. Do NOT run more commands. Do NOT read IR files. "
         "If NOT reproduced after ONE attempt, try ONE variation.\n"
-        "After writing extract.json, self-validate: python /llvm-autoreduce/scripts/verify-extract.py\n\n"
+        "After writing extract.json, self-validate: verify-extract\n\n"
         "extract.json schema:\n"
         '{"type": "crash|miscompilation", "reproducer_file": "<filename>", '
         '"args": "<opt/llc arguments>", "oracle": "opt|llc", '
@@ -1303,7 +1303,7 @@ def reprocess_issue(issue):
     #        the reducer. Multi-file reproducer scenarios (e.g. inter-module
     #        bugs requiring multiple .ll files) are not supported and will
     #        silently fail reduction.
-    reduce_prompt = "Read extract.json to determine the bug type. Load the appropriate skill (llvm-crash-reduce or llvm-miscompile-reduce) and reduce the reproducer. Write result.json. After writing result.json, self-validate: python /llvm-autoreduce/scripts/verify-result.py"
+    reduce_prompt = "Read extract.json to determine the bug type. Load the appropriate skill (llvm-crash-reduce or llvm-miscompile-reduce) and reduce the reproducer. Write result.json. After writing result.json, self-validate: verify-result"
     ok = opencode.run(
         agent="reducer",
         workdir=wd,

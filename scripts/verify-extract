@@ -1,0 +1,3 @@
+#!/bin/bash
+_script_dir="$(cd "$(dirname "$0")" && pwd)"
+python3 "$_script_dir/verify-extract.py"
