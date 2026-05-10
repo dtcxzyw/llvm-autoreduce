@@ -98,7 +98,7 @@ Run the single pass (opt) or llc on `reduced.ll`, confirm crash signature still 
 ```json
 {
   "type": "crash",
-  "tool": "opt",
+  "oracle": "opt",
   "args": "-passes=licm",
   "ir_file": "reduced.ll"
 }
@@ -109,7 +109,7 @@ The `args` for opt MUST be the single pass (e.g. `-passes=licm`), not a full pip
 ```json
 {
   "type": "crash",
-  "tool": "llc",
+  "oracle": "llc",
   "args": "",
   "ir_file": "reduced.ll"
 }
@@ -120,7 +120,7 @@ The `args` for opt MUST be the single pass (e.g. `-passes=licm`), not a full pip
 ```json
 {
   "type": "crash",
-  "tool": "opt",
+  "oracle": "opt",
   "args": "",
   "ir_file": "error.ll",
   "error": "brief description of what failed"

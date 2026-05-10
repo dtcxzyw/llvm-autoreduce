@@ -111,16 +111,16 @@ class TestValidateResult:
     def test_crash_ok(self):
         _validate_result({"ir_file": "repro.ll", "type": "crash"})
 
-    def test_crash_with_tool_ok(self):
-        _validate_result({"ir_file": "repro.ll", "type": "crash", "tool": "opt"})
+    def test_crash_with_oracle_ok(self):
+        _validate_result({"ir_file": "repro.ll", "type": "crash", "oracle": "opt"})
 
-    def test_crash_with_bad_tool_raises(self):
-        with pytest.raises(ValueError, match="invalid tool"):
-            _validate_result({"ir_file": "repro.ll", "type": "crash", "tool": "alive-tv"})
+    def test_crash_with_bad_oracle_raises(self):
+        with pytest.raises(ValueError, match="invalid oracle"):
+            _validate_result({"ir_file": "repro.ll", "type": "crash", "oracle": "alive-tv"})
 
     def test_crash_lli_rejected(self):
-        with pytest.raises(ValueError, match="invalid tool"):
-            _validate_result({"ir_file": "repro.ll", "type": "crash", "tool": "lli"})
+        with pytest.raises(ValueError, match="invalid oracle"):
+            _validate_result({"ir_file": "repro.ll", "type": "crash", "oracle": "lli"})
 
     def test_miscompilation_llubi_ok(self):
         _validate_result({"ir_file": "repro.ll", "type": "miscompilation", "oracle": "llubi"})

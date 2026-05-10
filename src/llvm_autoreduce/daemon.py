@@ -345,9 +345,9 @@ def _validate_result(result):
         raise ValueError(f"result.json ir_file is empty or contains path separators: {ir_file!r}")
     result_type = result.get("type", "")
     if result_type == "crash":
-        tool = result.get("tool", "opt")
-        if tool not in ("opt", "llc"):
-            raise ValueError(f"result.json crash type with invalid tool: {tool!r}")
+        oracle = result.get("oracle", "opt")  # default to opt for backward compat
+        if oracle not in ("opt", "llc"):
+            raise ValueError(f"result.json crash type with invalid oracle: {oracle!r}")
     elif result_type == "miscompilation":
         oracle = result.get("oracle", "")
         if oracle not in ("llubi", "alive2", "lli"):
@@ -366,7 +366,7 @@ def verify_crash(result, workdir_path, pattern):
     # The reducer agent sets up PATH via opencode._env() to include
     # work/llvm-trunk/build/bin, but the daemon's own verify step must
     # explicitly use the same built binaries to avoid version mismatch.
-    tool_name = result.get("tool", "opt")
+    tool_name = result.get("oracle", "opt")
     if tool_name not in ("opt", "llc"):
         log.error("verify crash: unknown tool %s", tool_name)
         return False
@@ -749,7 +749,7 @@ def verify_extract(meta, workdir_path):
             log.error("verify_extract: crash type missing pattern")
             return False
         result = {
-            "tool": oracle,
+            "oracle": oracle,
             "args": args,
             "ir_file": meta["reproducer_file"],
         }
@@ -958,11 +958,10 @@ def _generate_report(meta, result, workdir_path, issue_id):
     lines.append("## Steps to reproduce")
     lines.append("")
 
-    tool = result.get("tool", "opt")
     args = result.get("args", "")
 
     # ACCEPTED RISK (F44): The bash command in the reproduction steps
-    # is built by naive string concatenation (tool + args + ir_file)
+    # is built by naive string concatenation (oracle + args + ir_file)
     # rather than by reconstructing from shlex.split(args) as the verify
     # step uses. This means the reported command may not be structurally
     # identical to what was actually executed (e.g. quoted arguments
@@ -971,7 +970,7 @@ def _generate_report(meta, result, workdir_path, issue_id):
     # safety issue arises because the report is submitted as a GitHub
     # issue body (GitHub-flavored markdown), not executed by the daemon.
     if bug_type == "crash":
-        cmd = f"{tool} {args} {ir_file}"
+        cmd = f"{oracle} {args} {ir_file}"
         cmd = " ".join(cmd.split())
         lines.append("```bash")
         lines.append(cmd)

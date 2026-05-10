@@ -230,7 +230,6 @@ If llvm-reduce gets stuck on a specific delta pass (check its progress output fo
 ```json
 {
   "type": "miscompilation",
-  "tool": "opt",
   "args": "-passes=<pass_name>",
   "ir_file": "reduced.ll",
   "reference_file": "repro.ll",
@@ -244,7 +243,6 @@ If llvm-reduce gets stuck on a specific delta pass (check its progress output fo
 ```json
 {
   "type": "miscompilation",
-  "tool": "lli",
   "args": "<lli_args from extract.json>",
   "ir_file": "reduced.ll",
   "reference_file": "repro.ll",
@@ -305,7 +303,6 @@ Verify the reduced IR still reproduces the miscompilation with the single pass. 
 ```json
 {
   "type": "miscompilation",
-  "tool": "opt",
   "args": "-passes=gvn",
   "ir_file": "reduced.ll",
   "reference_file": "repro.ll",
@@ -319,7 +316,6 @@ Verify the reduced IR still reproduces the miscompilation with the single pass. 
 ```json
 {
   "type": "miscompilation",
-  "tool": "opt",
   "args": "-passes=gvn",
   "ir_file": "reduced.ll",
   "reference_file": "repro.ll",
@@ -333,7 +329,6 @@ Verify the reduced IR still reproduces the miscompilation with the single pass. 
 ```json
 {
   "type": "miscompilation",
-  "tool": "lli",
   "args": "<lli_args from extract.json>",
   "ir_file": "reduced.ll",
   "reference_file": "repro.ll",
@@ -351,7 +346,6 @@ Verify the reduced IR still reproduces the miscompilation with the single pass. 
 ```json
 {
   "type": "miscompilation",
-  "tool": "opt",
   "args": "",
   "ir_file": "error.ll",
   "reference_file": "repro.ll",
