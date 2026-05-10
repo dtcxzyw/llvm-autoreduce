@@ -25,31 +25,26 @@ opt -passes='<pipeline>' <reproducer_file> 2>&1 | grep -qF "<crash_pattern>"
 ```
 For llc crashes: `llc <reproducer_file> 2>&1 | grep -qF "<crash_pattern>"`.
 
-### 3. opt-bisect-limit binary search to find single pass (opt crashes only)
+### 3. opt-bisect-limit to identify the crashing pass (opt crashes only)
 
 For llc crashes, skip to step 5.
 
-**Goal: identify the single pass that triggers the crash.**
+**Goal: identify the single pass that triggers the crash — one command, no binary search needed.**
 
-First, get the total pass count:
-```
-timeout 60 opt -opt-bisect-limit=-1 -passes='<pipeline>' <reproducer_file> -S -o /dev/null 2>&1   → total=N
-```
-Binary search lo=1, hi=N:
-```
-opt -opt-bisect-limit=M -passes='<pipeline>' <reproducer_file> 2>&1
-  crash → hi=M
-  ok    → lo=M+1
-```
-Converge to M (the first pass that triggers the crash).
+`opt-bisect-limit=-1` runs all passes without stopping, but logs each pass number and name. The crash happens at the last pass printed in the log. The pass number M from the log is the crashing pass.
 
-### 4. Extract single pass name and capture IR before it
+```
+timeout 60 opt -opt-bisect-limit=-1 -passes='<pipeline>' reproducer.ll -S -o /dev/null 2>&1
+```
+Look for the last line matching `BISECT: running pass (M) <PassName> on ...` before the crash output — that M is the crashing pass number.
 
-The bisect log prints the last pass run before the crash (e.g. `BISECT: running pass (N) InstCombine on ...`). Convert this to the `-passes=` form (e.g. `-passes=instcombine`). Do NOT guess the pass name from filenames in crash backtraces.
+### 4. Extract the single pass name and capture IR before it
+
+The bisect log prints the pass name (e.g. `BISECT: running pass (N) InstCombine on ...`). Convert to the `-passes=` form (e.g. `-passes=instcombine`). Do NOT guess from filenames in crash backtraces.
 
 Capture the IR just before the crashing pass:
 ```
-opt -opt-bisect-limit=M-1 -passes='<pipeline>' <reproducer_file> -S > before.ll
+opt -opt-bisect-limit=M-1 -passes='<pipeline>' reproducer.ll -S > before.ll
 ```
 
 ### 5. Handle llc crashes
