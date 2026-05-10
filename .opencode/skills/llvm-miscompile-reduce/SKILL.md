@@ -58,28 +58,41 @@ timeout 60 llubi_legacy --reduce-mode --max-steps 1000000 repro.ll > ref_ubi
 timeout 60 opt -opt-bisect-limit=-1 -passes='<args>' repro.ll -S -o /dev/null 2>&1   → total=N
 ```
 
-**Middle-end (llubi oracle) — binary search lo=1, hi=N:**
-```
-while lo < hi:
-    M = (lo + hi) / 2
-    set -o pipefail
-    ! opt -opt-bisect-limit=M -passes='<args>' repro.ll -S | llubi_legacy --reduce-mode --max-steps 1000000 - | diff -q ref_ubi -
-      exit 0 (diff or crash) → miscompilation at or before M → hi=M
-      exit 1 (same output)   → correct up to M               → lo=M+1
-```
+**Write a bisect script — do NOT run the binary search inline (llvm-reduce style):**
 
-**Backend (lli oracle) — binary search lo=1, hi=N:**
+**Mid-end (llubi oracle):**
+```bash
+cat > bisect.sh <<'SCRIPT'
+#!/bin/bash
+set -o pipefail
+M="$1"
+ref="$2"
+ir="$3"
+! timeout 30 opt -opt-bisect-limit="$M" -passes='<args>' "$ir" -S | timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 - | diff -q "$ref" -
+SCRIPT
+chmod +x bisect.sh
 ```
-while lo < hi:
-    M = (lo + hi) / 2
-    set -o pipefail
-    ! opt -opt-bisect-limit=M -passes='<args>' repro.ll -S | lli - | diff -q ref_ubi -
-      exit 0 (diff or crash) → miscompilation at or before M → hi=M
-      exit 1 (same output)   → correct up to M               → lo=M+1
+Then binary search: `lo=1`, `hi=N`. At each step run `bisect.sh M ref_ubi repro.ll`:
+- exit 0 → miscompilation at or before M → hi=M
+- exit 1 → correct up to M → lo=M+1
+
+**Backend (lli oracle):**
+```bash
+cat > bisect.sh <<'SCRIPT'
+#!/bin/bash
+set -o pipefail
+M="$1"
+ref="$2"
+ir="$3"
+! timeout 30 opt -opt-bisect-limit="$M" "$ir" -S | timeout 120 lli - | diff -q "$ref" -
+SCRIPT
+chmod +x bisect.sh
 ```
+Then binary search, same as above.
+
 **ACCEPTED RISK:** Crash → miscompilation. `!` + `pipefail` inverts oracle/tool crashes to exit 0. The daemon's `verify()` step independently confirms.
 
-**IMPORTANT:** `diff -q` only compares exit code (0=same, 1=differ), no content output. `pipefail` prevents oracle crashes from producing empty output that would be mistaken for "same". The reference output is computed once, not inside the loop.
+**IMPORTANT:** `diff -q` only compares exit code (0=same, 1=differ), no content output. `pipefail` prevents oracle crashes from producing empty output that would be mistaken for "same". The reference output is computed once, not inside the loop. The `timeout 30` on opt and `timeout 120` on the oracle inside the script prevent any single bisect step from hanging the entire binary search.
 
 ### 4. Extract the single pass name and capture IR before it
 
