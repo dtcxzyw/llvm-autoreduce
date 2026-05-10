@@ -6,6 +6,8 @@ description: Reduce LLVM miscompilation reproducers — LLUBI/Alive2 oracle + op
 ## Tools
 All LLVM tools are on PATH: `opt`, `llc`, `lli`, `llvm-reduce`, `clang`, `alive-tv`, `llubi_legacy`.
 
+**Timeout rule: wrap every standalone `opt`, `llc`, `lli`, or `clang` command with `timeout 60`.** llubi_legacy `--max-steps 1000000` is sufficient. interestingness.sh commands already carry timeouts — no extra wrapping needed there.
+
 ## Miscompilation Reduction Pipeline
 
 **CRITICAL: Reduction operates exclusively on LLVM IR. Never compile IR to native binaries for verification — use the oracle tools (llubi_legacy, alive-tv, lli) directly on IR.**
@@ -168,6 +170,8 @@ chmod +x interestingness.sh
 llvm-reduce --test=interestingness.sh before.ll
 ```
 Output: `reduced.ll`
+
+If llvm-reduce gets stuck on a specific delta pass (check its progress output for a pass that keeps running without making progress), kill it and retry with `--skip-delta-passes=<pass_name>` (e.g. `--skip-delta-passes=instructions`). Repeat if it gets stuck on another pass.
 
 ### 6. Verify and write results
 

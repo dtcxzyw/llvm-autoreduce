@@ -6,6 +6,8 @@ description: Reduce LLVM crash reproducers — opt-bisect-limit to find pass, th
 ## Tools
 All LLVM tools are on PATH: `opt`, `llc`, `lli`, `llvm-reduce`, `clang`, `alive-tv`, `llubi_legacy`.
 
+**Timeout rule: wrap every standalone `opt`, `llc`, or `clang` command with `timeout 60`.** llubi_legacy `--max-steps 1000000` is sufficient. interestingness.sh commands already carry timeouts — no extra wrapping needed there.
+
 ## Crash Reduction Pipeline
 
 **CRITICAL: Reduction operates exclusively on LLVM IR. Never compile IR to native binaries for verification.**
@@ -81,6 +83,8 @@ llvm-reduce --test=interestingness.sh <reproducer_file>
 ```
 
 Output: `reduced.ll`
+
+If llvm-reduce gets stuck on a specific delta pass (check its progress output for a pass that keeps running without making progress), kill it and retry with `--skip-delta-passes=<pass_name>` (e.g. `--skip-delta-passes=instructions`). Repeat if it gets stuck on another pass.
 
 ### 7. Verify
 Run the single pass (opt) or llc on `reduced.ll`, confirm crash signature still matches.
