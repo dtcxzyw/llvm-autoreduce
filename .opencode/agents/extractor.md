@@ -45,6 +45,18 @@ Read `issue.md` for the bug report context. Inspect ALL files in the working dir
 Your job:
 1. **Reproduce the bug first.** Run the appropriate toolchain binary to reproduce the crash or miscompilation. Wrap toolchain commands with `timeout 60`. Stack traces and crash output quoted in the issue body are REFERENCE HINTS ONLY — the crash_pattern field MUST come from actual toolchain output produced by running the tool in this workdir. This validates the reproducer is functional before downstream stages spend time on it.
  2. **Identify the bug type** — classify as `crash` (opt/llc crash with stack trace or assertion), `miscompilation` (wrong code generation), or `unrelated`.
+
+    **Distinguishing mid-end vs backend:**
+
+    **For crash:** Run `clang -O2 source.c` (or the reported opt level) to reproduce the full pipeline crash. Inspect the stack trace — if the crash is in LLVM optimization passes (e.g. InstCombine, LICM, GVN) it is **mid-end**; if in codegen/ISel/regalloc it is **backend**.
+    - **Mid-end crash:** `clang -x c -O2 -Xclang -disable-llvm-passes -S -emit-llvm source.c -o reproducer.ll` to get IR before mid-end passes, then `opt -passes='default<O2>' reproducer.ll` to trigger. oracle=`opt`.
+    - **Backend crash:** `clang -x c -O2 -S -emit-llvm source.c -o reproducer.ll` to get IR after mid-end but before backend codegen, then `llc reproducer.ll` to trigger. oracle=`llc`.
+
+    **For miscompilation:** Run `clang -O2 source.c -o wrong; clang -O0 source.c -o ref; ./ref; ./wrong` to confirm different output. Then test at the IR level:
+    - `llubi_legacy reproducer.ll` (pre-opt IR) → `ref_out`
+    - `opt -passes='default<O2>' reproducer.ll -S | llubi_legacy` → `opt_out`
+    - If `ref_out` ≠ `opt_out` → **mid-end miscompilation**. oracle=`opt`.
+    - If `ref_out` = `opt_out` → the miscompilation is **backend** (mid-end opt is correct, codegen is wrong). Try `lli reproducer.ll` vs llubi reference → if they differ, oracle=`llc`.
     - **CRITICAL — lli crash handling:** If the crash output originates from lli/JIT, first try `llc` on the same IR. If `llc` also crashes → classify as `crash` (llc). If `llc` does NOT crash → classify as `miscompilation`, because the JIT crash indicates a backend codegen bug, not a crash in the compiler itself. The reducer never sees lli crash.
  3. **Compile C/C++ to IR if needed.** If any reproducer is C/C++ source, compile to IR AT THE REPORTED OPT LEVEL (never -O0) using: `clang -x c -O2 -Xclang -disable-llvm-passes -S -emit-llvm <source> -o reproducer.ll`. Use -O1/-O2/-O3 to match the issue's optimization level. The reproducer_file in extract.json MUST always be a .ll file.
  4. **Identify the primary reproducer** — the .ll file (either original or compiled from C/C++)
