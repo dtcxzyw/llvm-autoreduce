@@ -34,7 +34,9 @@ def setup_logging():
     root.setLevel(logging.INFO)
     root.handlers.clear()
     root.addHandler(handler)
-    root.addHandler(logging.StreamHandler(sys.stderr))
+    console = logging.StreamHandler(sys.stderr)
+    console.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    root.addHandler(console)
 
 
 _shutdown_requested = False
