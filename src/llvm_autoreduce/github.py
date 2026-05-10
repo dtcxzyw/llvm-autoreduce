@@ -76,12 +76,15 @@ def fetch_issues():
     # never discovered by the daemon, even if they contain valid
     # reproducers. For llvm/llvm-project this means only the 20 most
     # recently updated open issues are ever considered.
-    url = f"{GITHUB_API}/repos/{SOURCE_REPO}/issues"
-    params = {"state": "open", "per_page": ISSUES_PER_ROUND, "sort": "updated", "direction": "desc"}
+    # Use the Search API with is:issue to exclude PRs at the API level.
+    # The code-level filter below is retained as defense-in-depth.
+    url = f"{GITHUB_API}/search/issues"
+    query = f"is:issue is:open repo:{SOURCE_REPO}"
+    params = {"q": query, "per_page": ISSUES_PER_ROUND, "sort": "updated", "order": "desc"}
     resp = _request("GET", url, params=params)
-    items = resp.json()
-    # Filter out pull requests — GitHub's /issues endpoint returns both
-    # issues and PRs. PRs have a "pull_request" key; real issues do not.
+    items = resp.json()["items"]
+    # Filter out pull requests — retained as defense-in-depth even though
+    # the Search API is:issue qualifier should already exclude them.
     return [item for item in items if "pull_request" not in item]
 
 
