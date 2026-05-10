@@ -83,12 +83,27 @@ def _check_binary(binary_path, name):
 
 
 def _check_toolchain():
-    """Verify critical toolchain binaries exist, are executable, and can run.
+    """Build all toolchain components then verify binaries are functional.
+
+    Always runs cmake --build before checking --version so that a
+    silently broken binary (build succeeded but binary crashes) is
+    caught by the rebuild.
 
     Called after a BuildError or build timeout in the main loop to detect
     whether the toolchain was left in a corrupt state that would cause all
     subsequent reduction rounds to fail silently.
     """
+    log.info("toolchain health: building")
+    proc = subprocess.run(
+        ["bash", str(tools.UPDATE_SCRIPT), "--skip-git"],
+        cwd=str(config.PROJECT_ROOT),
+        capture_output=True, text=True, encoding="utf-8", timeout=1800,
+    )
+    if proc.returncode != 0:
+        log.critical("toolchain health check FAILED: build exit %d\n%s\n%s",
+                     proc.returncode, proc.stdout, proc.stderr)
+        return False
+
     missing = []
     # LLVM core tools — checked against config.LLVM_BIN (built from source).
     for name in ("opt", "llc", "lli", "llvm-reduce", "clang"):
