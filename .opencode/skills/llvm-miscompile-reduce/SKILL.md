@@ -84,7 +84,7 @@ set -o pipefail
 M="$1"
 ref="$2"
 ir="$3"
-! timeout 30 opt -opt-bisect-limit="$M" "$ir" -S | timeout 120 lli - | diff -q "$ref" -
+! timeout 30 opt -opt-bisect-limit="$M" "$ir" -S | timeout 10 lli - | diff -q "$ref" -
 SCRIPT
 chmod +x bisect.sh
 ```
