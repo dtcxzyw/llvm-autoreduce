@@ -778,7 +778,6 @@ def _generate_report(meta, result, workdir_path, issue_id):
     built from extract.json, result.json, and the reduced IR file.
     """
     bug_type = meta.get("type", "unknown")
-    pipeline = meta.get("pipeline", "")
     crash_pattern = meta.get("crash_pattern", "")
 
     ir_file = result["ir_file"]
@@ -793,9 +792,10 @@ def _generate_report(meta, result, workdir_path, issue_id):
     lines.append("")
     lines.append(f"**Bug type:** {bug_type}")
     # pipeline and crash_pattern are inserted into inline markdown code
-    # spans; the extractor agent produces well-formed strings — agent
+    # spans; the reducer agent produces well-formed strings — agent
     # output is trusted.
-    lines.append(f"**Pipeline:** `{pipeline}`")
+    reduced_pipeline = result.get("args", meta.get("pipeline", ""))
+    lines.append(f"**Pipeline:** `{reduced_pipeline}`")
 
     oracle = result.get("oracle", "")
     if oracle:
