@@ -687,6 +687,55 @@ def verify_extract_consistency(meta, result, workdir_path):
     return True
 
 
+def verify_extract(meta, workdir_path):
+    """Independently reproduce the bug from extract.json metadata.
+
+    Reuses the same verify functions that validate the reducer's result.json
+    to confirm the extractor's classification before the reducer runs.
+    Returns True if the bug reproduces.
+
+    ACCEPTED RISK (R19): verify_extract constructs a synthetic result dict
+    from extract.json fields and passes it to verify_crash / verify_llubi /
+    verify_lli. If those functions add new required fields that the synthetic
+    dict does not supply (e.g. KeyError from direct dict access), the
+    verify step fails and the issue is dropped. The set of required fields
+    across the three verify functions is small and stable.
+    """
+    bug_type = meta.get("type", "")
+    oracle = meta.get("oracle", "")
+    args = meta.get("args", "")
+
+    if bug_type == "crash":
+        crash_pattern = meta.get("crash_pattern", "")
+        if not crash_pattern:
+            log.error("verify_extract: crash type missing crash_pattern")
+            return False
+        result = {
+            "tool": oracle,
+            "args": args,
+            "ir_file": meta["reproducer_file"],
+        }
+        return verify_crash(result, workdir_path, crash_pattern)
+
+    if bug_type == "miscompilation":
+        result = {
+            "ir_file": meta["reproducer_file"],
+            "args": args,
+        }
+        if oracle == "opt":
+            result["llubi_args"] = "--reduce-mode --max-steps 1000000"
+            return verify_llubi(result, workdir_path)
+        if oracle == "llc":
+            result["llubi_args"] = "--reduce-mode --max-steps 1000000"
+            result["lli_args"] = ""
+            return verify_lli(result, workdir_path)
+        log.error("verify_extract: miscompilation with unknown oracle=%r", oracle)
+        return False
+
+    log.error("verify_extract: unknown bug type=%r", bug_type)
+    return False
+
+
 # Godbolt API request with tenacity retry — same retry policy as the GitHub
 # API client to handle transient upstream failures and rate limits.
 # ACCEPTED RISK (F15): Godbolt shortlink JSON responses are limited to 100 KB
@@ -1145,6 +1194,14 @@ def reprocess_issue(issue):
     except ValueError:
         log.warning("issue=%d extract.json validation failed", issue_id)
         mark_dropped(issue_id, "extract_validation_failed")
+        mark_processed(issue_id)
+        return
+
+    # Independently reproduce the bug to confirm the extractor's classification
+    # before spending reducer time on it.
+    if not verify_extract(meta, wd):
+        log.warning("issue=%d extract reproduction failed", issue_id)
+        mark_dropped(issue_id, "extract_verify_failed")
         mark_processed(issue_id)
         return
 
