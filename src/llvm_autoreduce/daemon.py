@@ -278,6 +278,12 @@ def _validate_meta(meta):
     if bug_type not in VALID_BUG_TYPES:
         raise ValueError(f"extract.json type not in {VALID_BUG_TYPES}: {bug_type!r}")
     oracle = meta.get("oracle", "")
+    # Compatibility: lli is a JIT tool; backend bugs use llc as the
+    # trigger with lli as the comparison oracle. Map lli → llc so
+    # older extractor output is accepted.
+    if oracle == "lli":
+        oracle = "llc"
+        meta["oracle"] = "llc"
     if oracle not in ("opt", "llc"):
         raise ValueError(f"extract.json oracle must be opt or llc: {oracle!r}")
     reproducer = meta.get("reproducer_file", "")
