@@ -15,17 +15,17 @@ All LLVM tools are on PATH: `opt`, `llc`, `lli`, `llvm-reduce`, `clang`, `alive-
 ### 1. Read metadata from extract.json
 Read `extract.json` and note:
 - `oracle` — `opt` for middle-end crash, `llc` for backend crash.
-- `crash_pattern` — the literal crash signature substring (plain text, not regex). Use this directly; do not re-extract.
+- `pattern` — the literal crash signature substring (plain text, not regex). Use this directly; do not re-extract.
 - `args` — the opt/llc arguments from the issue or `-passes='default<O2>'` as fallback (empty for llc without extra flags).
 - `reproducer_file` — the `.ll` file to reduce.
 
 ### 2. Reproduce the crash
 
-Verify the crash still reproduces with the crash_pattern:
+Verify the crash still reproduces with the pattern:
 
 **opt (middle-end):**
 ```
-opt <args> reproducer.ll 2>&1 | grep -qF "<crash_pattern>"
+opt <args> reproducer.ll 2>&1 | grep -qF "<pattern>"
 ```
 
 **llc (backend):**
@@ -68,7 +68,7 @@ If crash is in llc (not opt), skip bisect and go directly to llvm-reduce. The in
 cat > interestingness.sh <<'EOF'
 #!/bin/bash
 set -e
-timeout 30 opt -passes='<pass_name>' "$1" 2>&1 | grep -qF "<crash_pattern>"
+timeout 30 opt -passes='<pass_name>' "$1" 2>&1 | grep -qF "<pattern>"
 EOF
 chmod +x interestingness.sh
 llvm-reduce --test=interestingness.sh before.ll
