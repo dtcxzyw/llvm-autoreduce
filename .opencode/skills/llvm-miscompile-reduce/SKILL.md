@@ -113,8 +113,9 @@ cat > interestingness.sh <<'SCRIPT'
 set -o pipefail
 timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt || exit 1
 timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 -
-# Pipeline failed → exit code ≠ 0 → $? test succeeds → exit 0 (interesting)
-test $? -ne 0
+ret=$?
+# Exit 0 (interesting) if pipeline failed with crash/signal/assert — NOT timeout (124)
+test $ret -ne 0 -a $ret -ne 124
 SCRIPT
 ```
 
@@ -125,8 +126,9 @@ cat > interestingness.sh <<'SCRIPT'
 set -o pipefail
 timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt || exit 1
 timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 -
-# Pipeline timed out → exit 124
-test $? -eq 124
+ret=$?
+# Exit 0 (interesting) only if pipeline timed out
+test $ret -eq 124
 SCRIPT
 ```
 
@@ -149,8 +151,9 @@ cat > interestingness.sh <<'SCRIPT'
 set -o pipefail
 timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt || exit 1
 timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 lli -
-# Pipeline failed → exit code ≠ 0
-test $? -ne 0
+ret=$?
+# Exit 0 (interesting) if pipeline failed with crash/signal/assert — NOT timeout (124)
+test $ret -ne 0 -a $ret -ne 124
 SCRIPT
 ```
 
@@ -161,8 +164,9 @@ cat > interestingness.sh <<'SCRIPT'
 set -o pipefail
 timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt || exit 1
 timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 lli -
-# Pipeline timed out → exit 124
-test $? -eq 124
+ret=$?
+# Exit 0 (interesting) only if pipeline timed out
+test $ret -eq 124
 SCRIPT
 ```
 
