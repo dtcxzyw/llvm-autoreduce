@@ -11,8 +11,8 @@ ALIVE2_TRUNK = WORK_ROOT / "alive2-trunk"
 LLUBI_TRUNK = WORK_ROOT / "llubi-trunk"
 
 LLVM_BIN = LLVM_TRUNK / "build" / "bin"
-ALIVE2_BIN = ALIVE2_TRUNK / "build" / "bin" / "alive-tv"
-LLUBI_BIN = LLUBI_TRUNK / "build" / "bin" / "llubi_legacy"
+ALIVE2_BIN = ALIVE2_TRUNK / "build" / "alive-tv"
+LLUBI_BIN = LLUBI_TRUNK / "build" / "llubi_legacy"
 
 KNOWN_GOOD = WORK_ROOT / ".known-good"
 PROCESSED = WORK_ROOT / "processed.txt"
