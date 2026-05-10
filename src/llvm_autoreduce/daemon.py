@@ -458,7 +458,7 @@ def verify_llubi(result, workdir_path):
 # have been stable across multiple Alive2 releases and the coupling is
 # limited to this single function.
 _ALIVE2_INCORRECT_RE = re.compile(
-    r"[1-9]\d* incorrect transformations?|ERROR: Value mismatch"
+    r"[1-9]\d* incorrect transformation|ERROR: Value mismatch"
 )
 
 _ALIVE2_APPROXIMATION_MARKER = "Alive2 approximated the semantics of the programs"

@@ -146,9 +146,9 @@ SCRIPT
 ```bash
 cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
-set -e
+set -eo pipefail
 timeout 30 opt -passes='<pass_name>' "$1" -S > __opt.ll
-alive-tv --disable-undef-input --smt-to=10000 "$1" __opt.ll 2>&1 | grep -qE '[1-9][0-9]* incorrect transformation|ERROR: Value mismatch'
+timeout 120 alive-tv --disable-undef-input --smt-to=10000 "$1" __opt.ll 2>&1 | grep -qE '[1-9][0-9]* incorrect transformation|ERROR: Value mismatch'
 SCRIPT
 ```
 Note: `grep -qE` returns 0 (interesting=true) only when there is at least one incorrect transformation or a value mismatch. "0 incorrect transformations", "Transformation seems to be correct!", and "Alive2 approximated" all return 1 (not interesting).
