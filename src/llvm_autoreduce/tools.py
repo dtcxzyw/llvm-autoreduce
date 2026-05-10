@@ -77,7 +77,7 @@ def update_all():
         capture_output=True,
         text=True,
         encoding="utf-8",
-        timeout=1800,
+        timeout=3600,
     )
     if proc.returncode == 2:
         log.warning("toolchain update rolled back to known-good:\n%s\n%s", proc.stdout, proc.stderr)
