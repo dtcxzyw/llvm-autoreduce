@@ -202,7 +202,7 @@ This unrolls loops in both source and target up to N iterations, allowing alive2
 
 **NEVER use undef.** Do not introduce `undef` or `poison` values — alive2 handles them differently and they can mask real bugs. Use concrete values instead.
 
-**Strip fast math flags.** If the IR contains `fast` or other fast-math flags on floating-point instructions, strip them down to only `nnan` and `ninf`. Remove `nsz`, `arcp`, `contract`, `afn`, `reassoc`. If the miscompilation is specifically related to `nsz` (no-signed-zeros), prefer to drop `nsz` entirely rather than preserve it — a bug that only manifests with `nsz` is often not a real miscompilation.
+**Strip fast math flags.** If the IR contains `fast` or other fast-math flags on floating-point instructions, decompose `fast` into its constituent flags and keep only `nnan` and `ninf` — rewrite `fast` as `nnan ninf` explicitly. For any other fast-math flags (`nsz`, `arcp`, `contract`, `afn`, `reassoc`), remove them. If the miscompilation is specifically related to `nsz` (no-signed-zeros), prefer to drop `nsz` entirely rather than preserve it — a bug that only manifests with `nsz` is often not a real miscompilation.
 
 ### 8. Verify and write results
 
