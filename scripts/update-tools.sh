@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SKIP_GIT=false
+if [[ "${1:-}" == "--skip-git" ]]; then
+    SKIP_GIT=true
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WORK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)/work"
 KNOWN_GOOD_FILE="$WORK_DIR/.known-good"
@@ -119,29 +124,31 @@ JSONEOF
 # trust in upstream maintainers are the sole mitigations. This is the
 # FINAL design decision — automatic updates are preferred over version
 # locking.
-if [ ! -d "$WORK_DIR/llvm-trunk/.git" ]; then
-    echo "CLONE: llvm-project"
-    git clone https://github.com/llvm/llvm-project "$WORK_DIR/llvm-trunk"
+if ! $SKIP_GIT; then
+    if [ ! -d "$WORK_DIR/llvm-trunk/.git" ]; then
+        echo "CLONE: llvm-project"
+        git clone https://github.com/llvm/llvm-project "$WORK_DIR/llvm-trunk"
+    fi
+
+    if [ ! -d "$WORK_DIR/alive2-trunk/.git" ]; then
+        echo "CLONE: alive2"
+        git clone https://github.com/AliveToolkit/alive2 "$WORK_DIR/alive2-trunk"
+    fi
+
+    if [ ! -d "$WORK_DIR/llubi-trunk/.git" ]; then
+        echo "CLONE: llvm-ub-aware-interpreter"
+        git clone https://github.com/dtcxzyw/llvm-ub-aware-interpreter "$WORK_DIR/llubi-trunk"
+    fi
+
+    # ---- fetch latest ----
+    # NOTE: branch names are hardcoded (main/master). If an upstream repo
+    # renames its default branch, the clone+fetch logic must be updated here
+    # and in the clone commands above.
+
+    git -C "$WORK_DIR/llvm-trunk" fetch origin main
+    git -C "$WORK_DIR/alive2-trunk" fetch origin master
+    git -C "$WORK_DIR/llubi-trunk" fetch origin main
 fi
-
-if [ ! -d "$WORK_DIR/alive2-trunk/.git" ]; then
-    echo "CLONE: alive2"
-    git clone https://github.com/AliveToolkit/alive2 "$WORK_DIR/alive2-trunk"
-fi
-
-if [ ! -d "$WORK_DIR/llubi-trunk/.git" ]; then
-    echo "CLONE: llvm-ub-aware-interpreter"
-    git clone https://github.com/dtcxzyw/llvm-ub-aware-interpreter "$WORK_DIR/llubi-trunk"
-fi
-
-# ---- fetch latest ----
-# NOTE: branch names are hardcoded (main/master). If an upstream repo
-# renames its default branch, the clone+fetch logic must be updated here
-# and in the clone commands above.
-
-git -C "$WORK_DIR/llvm-trunk" fetch origin main
-git -C "$WORK_DIR/alive2-trunk" fetch origin master
-git -C "$WORK_DIR/llubi-trunk" fetch origin main
 
 # ---- detect state ----
 
