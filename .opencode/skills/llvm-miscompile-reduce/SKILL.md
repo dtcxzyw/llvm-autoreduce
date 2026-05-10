@@ -15,8 +15,8 @@ All LLVM tools are on PATH: `opt`, `llc`, `lli`, `llvm-reduce`, `clang`, `alive-
 ### 0. Read metadata from extract.json
 Read `extract.json` and note:
 - `oracle` — `opt` for middle-end, `llc` for backend.
-- `args` — the opt/llc arguments (e.g. `-passes='default<O2>'`).
-- `reproducer_file` — the `.ll` file to reduce.
+- `args` — the opt/llc/lli arguments. For oracle=opt this is the opt pipeline (e.g. `-passes='default<O2>'`). For oracle=llc this is the llc/lli args (usually `""` for backend miscompilation — the reproducer IR is already fully optimized by clang).
+- `reproducer_file` — the `.ll` file to reduce. For backend miscompilation with oracle=llc, this is `full_opt.ll` (already optimized — no bisect needed).
 - **`pattern`** — how the miscompilation manifests: `wrong_output`, `nonzero_exit`, or `infinite_loop`. The interestingness script MUST be written to preserve this exact pattern type — do NOT change wrong_output into a crash check or vice versa.
 
 Create a symlink for convenience:
@@ -28,7 +28,7 @@ ln -sf <reproducer_file> repro.ll
 
 Based on `extract.json` oracle:
 - `oracle=opt` (middle-end) → use **llubi_legacy** for bisect and reduce
-- `oracle=llc` (backend) → use **lli** for bisect and reduce (with llubi_legacy as reference)
+- `oracle=llc` (backend) → use **lli** for reduce (no bisect needed — the reproducer IR from clang is already fully optimized)
 
 **CRITICAL — lli preprocessing:** Before using the `lli` oracle, preprocess the IR to remove `main()` argument dependencies. If `main()` uses `argc`/`argv`, strip those references from the IR (e.g., replace `argc` with a constant). Without this, `llubi_legacy` and `lli` may produce different output even on a correct backend because `llubi_legacy` does not pass command-line arguments.
 
@@ -40,17 +40,18 @@ set -o pipefail
 timeout 60 llubi_legacy --reduce-mode --max-steps 1000000 repro.ll > ref_ubi
 ! opt -passes='<args>' repro.ll -S | llubi_legacy --reduce-mode --max-steps 1000000 - | diff -q ref_ubi -
 ```
-**Backend (lli):**
+**Backend (lli — no bisect, IR is already optimized):**
 ```
-set -o pipefail
+set -e
 timeout 60 llubi_legacy --reduce-mode --max-steps 1000000 repro.ll > ref_ubi
-! opt -passes='<args>' repro.ll -S | lli - | diff -q ref_ubi -
+timeout 10 lli <args> repro.ll > _lli_out
+! diff -q ref_ubi _lli_out
 ```
 **ACCEPTED RISK:** Crashes in the pipeline (opt, llubi_legacy, or lli segfault) are treated as miscompilation: `pipefail` makes the pipeline exit non-zero on crash, `!` inverts that to exit 0 ("miscompilation found"). The daemon's final `verify()` step independently checks the reduced IR and will reject cases where the miscompilation does not actually reproduce, so a crash-confused reduction is caught at verification time.
 
 ### 3. opt-bisect-limit binary search to find single pass
 
-**Goal: identify the single pass that introduces the miscompilation.**
+**Middle-end only (oracle=opt).** For backend miscompilation (oracle=llc), skip to step 5 — the reproducer IR is already optimized and no bisect is needed.
 
 First, pre-compute the reference output and get total pass count:
 ```
@@ -155,9 +156,34 @@ cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
 set -eo pipefail
 timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt
-timeout 30 opt -passes='<pass_name>' "$1" -S > _opt.ll
-timeout 120 lli _opt.ll > _out.txt
+timeout 10 lli <args> "$1" > _out.txt
 ! diff -q _ref.txt _out.txt
+SCRIPT
+```
+
+**lli oracle (backend) — pattern=nonzero_exit:**
+```bash
+cat > interestingness.sh <<'SCRIPT'
+#!/bin/bash
+set -o pipefail
+timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt || exit 1
+timeout 10 lli <args> "$1" > /dev/null
+ret=$?
+# Exit 0 (interesting) if pipeline failed with crash/signal/assert — NOT timeout (124)
+test $ret -ne 0 -a $ret -ne 124
+SCRIPT
+```
+
+**lli oracle (backend) — pattern=infinite_loop:**
+```bash
+cat > interestingness.sh <<'SCRIPT'
+#!/bin/bash
+set -o pipefail
+timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt || exit 1
+timeout 10 lli <args> "$1" > /dev/null
+ret=$?
+# Exit 0 (interesting) only if pipeline timed out
+test $ret -eq 124
 SCRIPT
 ```
 
@@ -218,8 +244,8 @@ If llvm-reduce gets stuck on a specific delta pass (check its progress output fo
 ```json
 {
   "type": "miscompilation",
-  "tool": "opt",
-  "args": "-passes=<pass_name>",
+  "tool": "lli",
+  "args": "<lli_args from extract.json>",
   "ir_file": "reduced.ll",
   "reference_file": "repro.ll",
   "oracle": "lli",
@@ -307,8 +333,8 @@ Verify the reduced IR still reproduces the miscompilation with the single pass. 
 ```json
 {
   "type": "miscompilation",
-  "tool": "opt",
-  "args": "-passes=gvn",
+  "tool": "lli",
+  "args": "<lli_args from extract.json>",
   "ir_file": "reduced.ll",
   "reference_file": "repro.ll",
   "oracle": "lli",

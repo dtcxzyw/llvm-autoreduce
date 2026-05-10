@@ -30,9 +30,9 @@ You are a metadata extractor for LLVM bug reports.
 | Mid-end crash | `opt` | opt pipeline (e.g. `-passes='default<O2>'`) | literal crash substring from stderr |
 | Backend crash | `llc` | llc args (usually `""`) | literal crash substring from stderr |
 | Mid-end miscompilation | `opt` | opt pipeline | `wrong_output` / `nonzero_exit` / `infinite_loop` |
-| Backend miscompilation | `llc` | opt pipeline | `wrong_output` / `nonzero_exit` / `infinite_loop` |
+| Backend miscompilation | `llc` | lli args (usually `""`) | `wrong_output` / `nonzero_exit` / `infinite_loop` |
 
-`args` is always passed to the bug-introducing tool: `opt` for mid-end, `llc` for backend crash, `opt` (bisect via reducer) for backend miscompilation. For `oracle=llc`, crash args default to `""`.
+`args` is always passed to the tool that reproduces the bug: `opt` for mid-end, `llc` for backend crash, `lli` for backend miscompilation.
 
 If none of the above match, classify as `type: "unrelated"`.
 
@@ -58,7 +58,7 @@ Your job:
     - `llubi_legacy reproducer.ll` (pre-opt IR, compiled with `-Xclang -disable-llvm-passes`) → `ref_out`
     - `opt -passes='default<O2>' reproducer.ll -S | llubi_legacy` → `opt_out`
     - If `ref_out` ≠ `opt_out`, or transformed llubi crashes/exits nonzero → **mid-end miscompilation**. oracle=`opt`.
-    - If `ref_out` = `opt_out` → the mid-end is correct. Generate fully-optimized IR: `clang -O2 -S -emit-llvm source.c -o full_opt.ll` (without `-disable-llvm-passes`, so the IR is already optimized). Then `lli full_opt.ll` — if output differs from reference, or lli crashes/exits nonzero → oracle=`llc`.
+    - If `ref_out` = `opt_out` → the mid-end is correct. Generate fully-optimized IR: `clang -O2 -S -emit-llvm source.c -o full_opt.ll` (without `-disable-llvm-passes`, so the IR is already optimized). Then `lli full_opt.ll` — if output differs from reference, or lli crashes/exits nonzero → **backend miscompilation**. oracle=`llc`, args=`""`, reproducer_file=`full_opt.ll` (the already-optimized IR — no opt pipeline needed).
     - If **neither** oracle can reproduce (both produce identical output and exit 0), classify as `type: "unrelated"`.
     - **CRITICAL — lli crash handling:** If the crash output originates from lli/JIT, first try `llc` on the same IR. If `llc` also crashes → classify as `crash` (llc). If `llc` does NOT crash → classify as `miscompilation`, because the JIT crash indicates a backend codegen bug, not a crash in the compiler itself. The reducer never sees lli crash.
  3. **Compile C/C++ to IR if needed.** If any reproducer is C/C++ source, compile to IR AT THE REPORTED OPT LEVEL (never -O0) using: `clang -x c -O2 -Xclang -disable-llvm-passes -S -emit-llvm <source> -o reproducer.ll`. Use -O1/-O2/-O3 to match the issue's optimization level. The reproducer_file in extract.json MUST always be a .ll file.
@@ -70,7 +70,7 @@ Your job:
       - `nonzero_exit` — the transformed oracle crashes (signal/assert) or exits with non-zero return code
       - `infinite_loop` — the transformed oracle hangs / times out (does not exit within the timeout)
       The reducer's interestingness script MUST reproduce the SAME pattern type — it cannot change wrong_output into nonzero_exit or infinite_loop.
- 6. **Determine the oracle and args** — `oracle`: "opt" for middle-end bugs, "llc" for backend bugs. `args`: the arguments passed to the bug-introducing tool. For oracle=opt, args is the opt pipeline (e.g. `-passes='default<O2>'`). For oracle=llc crash, args is llc flags (default `""`). For oracle=llc miscompilation, args is the opt pipeline used to produce the triggering IR (because the reducer bisects mid-end passes to find the backend-triggering transformation).
+ 6. **Determine the oracle and args** — `oracle`: "opt" for middle-end bugs, "llc" for backend bugs. `args`: the arguments passed to the bug-introducing tool. For oracle=opt, args is the opt pipeline (e.g. `-passes='default<O2>'`). For oracle=llc crash, args is llc flags (default `""`). For oracle=llc miscompilation, args is lli flags (default `""`, since lli doesn't take optimization passes — the reproducer is already fully optimized by clang).
 
 Write your findings to `extract.json`:
 
@@ -95,9 +95,9 @@ Write your findings to `extract.json`:
 **For miscompilation bugs (backend):**
 {
   "type": "miscompilation",
-  "reproducer_file": "reproducer.ll",
+  "reproducer_file": "full_opt.ll",
   "pattern": "nonzero_exit",
-  "args": "-passes='default<O2>'",
+  "args": "",
   "oracle": "llc"
 }
 
