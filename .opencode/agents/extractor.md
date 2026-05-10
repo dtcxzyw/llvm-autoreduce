@@ -25,12 +25,14 @@ You are a metadata extractor for LLVM bug reports.
 
 ## Supported bug types (extract stage)
 
-| Bug type | oracle | How to confirm |
-|----------|--------|---------------|
-| Mid-end crash | `opt` | `opt <args> reproducer.ll` crashes. Extract a literal substring from stderr as `crash_pattern`. |
-| Backend crash | `llc` | `llc <args> reproducer.ll` crashes. Extract a literal substring from stderr as `crash_pattern`. |
-| Mid-end miscompilation | `opt` | `llubi_legacy reproducer.ll` as reference (MUST exit 0). `opt <args> reproducer.ll \| llubi_legacy` as transformed. Confirmed if stdout differs **or** transformed rc≠0/crash. |
-| Backend miscompilation | `llc` | `llubi_legacy reproducer.ll` as reference (MUST exit 0). Mid-end correct (ref = `opt <args> reproducer.ll \| llubi_legacy`). Generate `clang -O2 -S -emit-llvm source.c -o full_opt.ll` (no `-disable-llvm-passes`), then `lli full_opt.ll` — confirmed if stdout differs **or** lli rc≠0/crash. |
+| Bug type | oracle | args | pattern |
+|----------|--------|------|---------|
+| Mid-end crash | `opt` | opt pipeline (e.g. `-passes='default<O2>'`) | literal crash substring from stderr |
+| Backend crash | `llc` | llc args (usually `""`) | literal crash substring from stderr |
+| Mid-end miscompilation | `opt` | opt pipeline | `wrong_output` / `nonzero_exit` / `infinite_loop` |
+| Backend miscompilation | `llc` | opt pipeline | `wrong_output` / `nonzero_exit` / `infinite_loop` |
+
+`args` is always passed to the bug-introducing tool: `opt` for mid-end, `llc` for backend crash, `opt` (bisect via reducer) for backend miscompilation. For `oracle=llc`, crash args default to `""`.
 
 If none of the above match, classify as `type: "unrelated"`.
 
@@ -43,52 +45,67 @@ Read `issue.md` for the bug report context. Inspect ALL files in the working dir
 **File type identification:** Files have no extensions — you MUST identify each file's actual type by reading its first 5-10 non-empty lines. LLVM IR files start with `; ModuleID`, `target triple`, `define`, `declare`, or `source_filename`. C/C++ files contain `#include`, `int main`, function signatures, etc. Do NOT use `file` — it cannot distinguish C from C++. When compiling C/C++ sources, use `clang -x c` or `clang -x c++` explicitly.
 
 Your job:
-1. **Reproduce the bug first.** Run the appropriate toolchain binary to reproduce the crash or miscompilation. Wrap toolchain commands with `timeout 60`. Stack traces and crash output quoted in the issue body are REFERENCE HINTS ONLY — the crash_pattern field MUST come from actual toolchain output produced by running the tool in this workdir. This validates the reproducer is functional before downstream stages spend time on it.
+1. **Reproduce the bug first.** Run the appropriate toolchain binary to reproduce the crash or miscompilation. Wrap toolchain commands with `timeout 60`. Stack traces and crash output quoted in the issue body are REFERENCE HINTS ONLY — the pattern field MUST come from actual toolchain output produced by running the tool in this workdir. This validates the reproducer is functional before downstream stages spend time on it.
  2. **Identify the bug type** — classify as `crash` (opt/llc crash with stack trace or assertion), `miscompilation` (wrong code generation), or `unrelated`.
 
     **Distinguishing mid-end vs backend:**
 
     **For crash:** Run `clang -O2 source.c` (or the reported opt level) to reproduce the full pipeline crash. Inspect the stack trace — if the crash is in LLVM optimization passes (e.g. InstCombine, LICM, GVN) it is **mid-end**; if in codegen/ISel/regalloc it is **backend**.
-    - **Mid-end crash:** `clang -x c -O2 -Xclang -disable-llvm-passes -S -emit-llvm source.c -o reproducer.ll` to get IR before mid-end passes, then `opt -passes='default<O2>' reproducer.ll` to trigger. oracle=`opt`.
-    - **Backend crash:** `clang -x c -O2 -S -emit-llvm source.c -o reproducer.ll` to get IR after mid-end but before backend codegen, then `llc reproducer.ll` to trigger. oracle=`llc`.
+    - **Mid-end crash:** `clang -x c -O2 -Xclang -disable-llvm-passes -S -emit-llvm source.c -o reproducer.ll` to get IR before mid-end passes, then `opt -passes='default<O2>' reproducer.ll` to trigger. oracle=`opt`, args=`-passes='default<O2>'`.
+    - **Backend crash:** `clang -x c -O2 -S -emit-llvm source.c -o reproducer.ll` to get IR after mid-end but before backend codegen, then `llc reproducer.ll` to trigger. oracle=`llc`, args=`""`.
 
     **For miscompilation:** Confirm using only IR-level oracle tools (llubi_legacy, lli). **NEVER compile IR to native binaries or execute native binaries.**
     - `llubi_legacy reproducer.ll` (pre-opt IR, compiled with `-Xclang -disable-llvm-passes`) → `ref_out`
     - `opt -passes='default<O2>' reproducer.ll -S | llubi_legacy` → `opt_out`
     - If `ref_out` ≠ `opt_out`, or transformed llubi crashes/exits nonzero → **mid-end miscompilation**. oracle=`opt`.
-    - If `ref_out` = `opt_out` → the mid-end is correct. Generate fully-optimized IR: `clang -O2 -S -emit-llvm source.c -o full_opt.ll` (without `-disable-llvm-passes`, so the IR is already optimized). Then `lli full_opt.ll` — if output differs from reference, or lli crashes/exits nonzero, oracle=`llc`.
+    - If `ref_out` = `opt_out` → the mid-end is correct. Generate fully-optimized IR: `clang -O2 -S -emit-llvm source.c -o full_opt.ll` (without `-disable-llvm-passes`, so the IR is already optimized). Then `lli full_opt.ll` — if output differs from reference, or lli crashes/exits nonzero → oracle=`llc`.
     - If **neither** oracle can reproduce (both produce identical output and exit 0), classify as `type: "unrelated"`.
     - **CRITICAL — lli crash handling:** If the crash output originates from lli/JIT, first try `llc` on the same IR. If `llc` also crashes → classify as `crash` (llc). If `llc` does NOT crash → classify as `miscompilation`, because the JIT crash indicates a backend codegen bug, not a crash in the compiler itself. The reducer never sees lli crash.
  3. **Compile C/C++ to IR if needed.** If any reproducer is C/C++ source, compile to IR AT THE REPORTED OPT LEVEL (never -O0) using: `clang -x c -O2 -Xclang -disable-llvm-passes -S -emit-llvm <source> -o reproducer.ll`. Use -O1/-O2/-O3 to match the issue's optimization level. The reproducer_file in extract.json MUST always be a .ll file.
  4. **Identify the primary reproducer** — the .ll file (either original or compiled from C/C++)
- 5. **Extract a crash pattern** — a literal substring from the actual crash output reproduced in this workdir that uniquely identifies this crash (e.g. "Assertion `X && Y` failed"). Do NOT use regex — produce a plain text fragment. For miscompilation bugs, leave empty.
-  6. **Determine the oracle and args** — `oracle`: "opt" for middle-end bugs, "llc" for backend bugs. `args`: the pipeline that reproduces the bug (always `-passes=...` for opt, empty for llc crash). For backend miscompilation, `args` is the opt pipeline used to produce the IR that triggers the backend bug (e.g. `-passes='default<O2>'`), because the reducer needs to bisect mid-end passes
+ 5. **Determine the pattern** — how the bug manifests:
+    - **Crash:** extract a literal substring from the actual crash output reproduced in this workdir that uniquely identifies this crash (e.g. "Assertion `X && Y` failed"). Plain text, NOT regex.
+    - **Miscompilation:** classify how the oracle detects the bug:
+      - `wrong_output` — reference stdout differs from transformed stdout
+      - `nonzero_exit` — the transformed oracle crashes (signal/assert) or exits with non-zero return code
+      - `infinite_loop` — the transformed oracle hangs / times out (does not exit within the timeout)
+      The reducer's interestingness script MUST reproduce the SAME pattern type — it cannot change wrong_output into nonzero_exit or infinite_loop.
+ 6. **Determine the oracle and args** — `oracle`: "opt" for middle-end bugs, "llc" for backend bugs. `args`: the arguments passed to the bug-introducing tool. For oracle=opt, args is the opt pipeline (e.g. `-passes='default<O2>'`). For oracle=llc crash, args is llc flags (default `""`). For oracle=llc miscompilation, args is the opt pipeline used to produce the triggering IR (because the reducer bisects mid-end passes to find the backend-triggering transformation).
 
 Write your findings to `extract.json`:
 
 **For crash bugs:**
 {
   "type": "crash",
-  "reproducer_file": "inline_1.ll",
-  "crash_pattern": "failed at LICM.cpp",
+  "reproducer_file": "reproducer.ll",
+  "pattern": "Assertion `X && Y` failed",
   "args": "-passes='default<O2>'",
   "oracle": "opt"
 }
 
-**For miscompilation bugs:**
+**For miscompilation bugs (mid-end):**
 {
   "type": "miscompilation",
-  "reproducer_file": "inline_1.ll",
-  "crash_pattern": "",
+  "reproducer_file": "reproducer.ll",
+  "pattern": "wrong_output",
   "args": "-passes='default<O2>'",
   "oracle": "opt"
+}
+
+**For miscompilation bugs (backend):**
+{
+  "type": "miscompilation",
+  "reproducer_file": "reproducer.ll",
+  "pattern": "nonzero_exit",
+  "args": "-passes='default<O2>'",
+  "oracle": "llc"
 }
 
 **For unrelated:**
 {
   "type": "unrelated",
   "reproducer_file": "",
-  "crash_pattern": "",
+  "pattern": "",
   "args": "",
   "oracle": ""
 }

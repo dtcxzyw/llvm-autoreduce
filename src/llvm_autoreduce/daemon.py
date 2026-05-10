@@ -295,15 +295,21 @@ def _validate_meta(meta):
     # are trusted oracles; the daemon does not validate args contents.
     # Path traversal on reproducer_file is validated because the daemon
     # writes those files itself.
-    crash_pattern = meta.get("crash_pattern", "")
-    # crash_pattern is a literal substring (not regex) matched against
-    # crash output via plain string containment. The extractor agent
-    # produces meaningful literal text fragments from actual crash output;
-    # agent output is trusted.
-    if bug_type == "crash" and not crash_pattern:
-        raise ValueError("extract.json type=crash requires crash_pattern")
-    if crash_pattern and len(crash_pattern) > 2000:
-        raise ValueError(f"extract.json crash_pattern too long: {len(crash_pattern)} chars")
+    pattern = meta.get("pattern", "")
+    # pattern is a literal substring (not regex) matched against crash
+    # output via plain string containment, or one of wrong_output /
+    # nonzero_exit / infinite_loop for miscompilation.
+    if bug_type == "crash":
+        if not pattern:
+            raise ValueError("extract.json type=crash requires pattern")
+        if len(pattern) > 2000:
+            raise ValueError(f"extract.json pattern too long: {len(pattern)} chars")
+    elif bug_type == "miscompilation":
+        if pattern not in ("wrong_output", "nonzero_exit", "infinite_loop"):
+            raise ValueError(
+                f"extract.json miscompilation pattern must be "
+                f"wrong_output/nonzero_exit/infinite_loop: {pattern!r}"
+            )
 
 
 def _safe_relative(workdir_path, filename):
@@ -326,11 +332,11 @@ def _validate_result(result):
     """Validate result.json schema. Agent output is trusted for content
     but required fields and enumerations are checked for structural validity.
 
-    crash_pattern is intentionally NOT validated here — it originates
-    exclusively from extract.json (the extractor agent). The reducer agent
-    produces result.json without a crash_pattern field; the daemon pairs
-    extract.json's crash_pattern with result.json's ir_file/tool/args at
-    verification time.
+    # pattern is intentionally NOT validated here — it originates
+    # exclusively from extract.json (as the "pattern" field). The reducer agent
+    # produces result.json without a pattern field; the daemon pairs
+    # extract.json's pattern with result.json's ir_file/tool/args at
+    # verification time.
     """
     if "ir_file" not in result:
         raise ValueError("result.json missing required field: ir_file")
@@ -355,7 +361,7 @@ def _validate_result(result):
         raise ValueError(f"result.json has unknown type: {result_type!r}")
 
 
-def verify_crash(result, workdir_path, crash_pattern):
+def verify_crash(result, workdir_path, pattern):
     # Resolve the tool binary from the built LLVM toolchain (never PATH).
     # The reducer agent sets up PATH via opencode._env() to include
     # work/llvm-trunk/build/bin, but the daemon's own verify step must
@@ -392,11 +398,11 @@ def verify_crash(result, workdir_path, crash_pattern):
     # ACCEPTED RISK (F43): p.returncode != 0 treats any non-zero exit as
     # a crash signal. LLVM tools may exit non-zero for non-crash reasons
     # (e.g. exec failure, resource exhaustion, I/O error). If such an
-    # error message happens to contain the crash_pattern substring, the
-    # verify step returns a false positive. In practice crash_pattern is
+    # error message happens to contain the pattern substring, the
+    # verify step returns a false positive. In practice pattern is
     # a specific fragment from an actual crash trace (e.g. "failed at
     # LICM.cpp"), making coincidental matches extremely unlikely.
-    return p.returncode != 0 and crash_pattern in (p.stderr + p.stdout)
+    return p.returncode != 0 and pattern in (p.stderr + p.stdout)
 
 
 # ACCEPTED RISK (R6): verify_llubi compares exact stdout strings
@@ -410,7 +416,7 @@ def verify_crash(result, workdir_path, crash_pattern):
 # (non-zero pipeline exit inverted to 0 by `!`). The verify step here
 # independently runs the oracle and checks returncode, catching
 # crash-confused reductions produced by the skill's scripts.
-def verify_llubi(result, workdir_path):
+def verify_llubi(result, workdir_path, pattern=""):
     safe_ir = _safe_relative(workdir_path, result["ir_file"])
     args = result.get("args", "")
     # llubi_args is produced by the reducer agent (trusted oracle).
@@ -474,6 +480,9 @@ def verify_llubi(result, workdir_path):
             return True
         return ref.stdout != test.stdout
     except subprocess.TimeoutExpired:
+        if pattern == "infinite_loop":
+            log.info("verify llubi timeout — confirmed infinite loop")
+            return True
         log.error("verify llubi timeout")
         return False
     except OSError:
@@ -568,7 +577,7 @@ def verify_alive2(result, workdir_path):
 # The reducer agent preprocesses the IR to remove main() argument
 # dependencies before using the lli oracle, so the two tools produce
 # consistent output for correct backends.
-def verify_lli(result, workdir_path):
+def verify_lli(result, workdir_path, pattern=""):
     safe_ir = _safe_relative(workdir_path, result["ir_file"])
     args = result.get("args", "")
     # lli_args and llubi_args are produced by the reducer agent (trusted oracle).
@@ -613,6 +622,9 @@ def verify_lli(result, workdir_path):
             return True
         return ref.stdout != test.stdout
     except subprocess.TimeoutExpired:
+        if pattern == "infinite_loop":
+            log.info("verify lli timeout — confirmed infinite loop")
+            return True
         log.error("verify lli timeout")
         return False
     except OSError:
@@ -632,19 +644,19 @@ def verify_lli(result, workdir_path):
 # enforcement because both already enumerate the same closed set and new
 # oracle types are expected to be extremely rare.
 def verify(result, workdir_path, meta):
+    pattern = meta.get("pattern", "")
     if result.get("type") == "crash":
-        # crash_pattern originates exclusively from extract.json.
-        crash_pattern = meta.get("crash_pattern", "")
-        if not crash_pattern:
-            log.error("crash verification requires crash_pattern from extract.json")
+        # pattern originates exclusively from extract.json.
+        if not pattern:
+            log.error("crash verification requires pattern from extract.json")
             return False
-        return verify_crash(result, workdir_path, crash_pattern)
+        return verify_crash(result, workdir_path, pattern)
     if result.get("oracle") == "llubi":
-        return verify_llubi(result, workdir_path)
+        return verify_llubi(result, workdir_path, pattern)
     if result.get("oracle") == "alive2":
         return verify_alive2(result, workdir_path)
     if result.get("oracle") == "lli":
-        return verify_lli(result, workdir_path)
+        return verify_lli(result, workdir_path, pattern)
     log.error("verify: cannot verify result with type=%r oracle=%r",
               result.get("type"), result.get("oracle"))
     return False
@@ -653,8 +665,8 @@ def verify(result, workdir_path, meta):
 def verify_extract_consistency(meta, result, workdir_path):
     """Cross-check extract.json metadata against reduce result.json.
 
-    crash_pattern is validated against meta only — result.json no longer
-    carries crash_pattern (it originates exclusively from extract.json).
+    pattern is validated against meta only — result.json no longer
+    carries pattern (it originates exclusively from extract.json).
     """
     bug_type = meta.get("type", "")
     result_type = result.get("type", "")
@@ -662,12 +674,12 @@ def verify_extract_consistency(meta, result, workdir_path):
         log.warning("type mismatch: extract=%s result=%s", bug_type, result_type)
         return False
 
-    crash_pattern = meta.get("crash_pattern", "")
-    if bug_type == "crash" and not crash_pattern:
-        log.warning("extract type=crash but crash_pattern is empty")
+    pattern = meta.get("pattern", "")
+    if bug_type == "crash" and not pattern:
+        log.warning("extract type=crash but pattern is empty")
         return False
-    if bug_type == "miscompilation" and crash_pattern:
-        log.warning("extract type=miscompilation but crash_pattern is non-empty, ignoring crash_pattern")
+    if bug_type == "miscompilation" and pattern not in ("wrong_output", "nonzero_exit", "infinite_loop"):
+        log.warning("extract type=miscompilation but pattern is not a recognized value: %r", pattern)
 
     ir_file = result.get("ir_file", "")
     if ir_file and not (workdir_path / ir_file).exists():
@@ -704,18 +716,18 @@ def verify_extract(meta, workdir_path):
     bug_type = meta.get("type", "")
     oracle = meta.get("oracle", "")
     args = meta.get("args", "")
+    pattern = meta.get("pattern", "")
 
     if bug_type == "crash":
-        crash_pattern = meta.get("crash_pattern", "")
-        if not crash_pattern:
-            log.error("verify_extract: crash type missing crash_pattern")
+        if not pattern:
+            log.error("verify_extract: crash type missing pattern")
             return False
         result = {
             "tool": oracle,
             "args": args,
             "ir_file": meta["reproducer_file"],
         }
-        return verify_crash(result, workdir_path, crash_pattern)
+        return verify_crash(result, workdir_path, pattern)
 
     if bug_type == "miscompilation":
         result = {
@@ -724,11 +736,11 @@ def verify_extract(meta, workdir_path):
         }
         if oracle == "opt":
             result["llubi_args"] = "--reduce-mode --max-steps 1000000"
-            return verify_llubi(result, workdir_path)
+            return verify_llubi(result, workdir_path, pattern)
         if oracle == "llc":
             result["llubi_args"] = "--reduce-mode --max-steps 1000000"
             result["lli_args"] = ""
-            return verify_lli(result, workdir_path)
+            return verify_lli(result, workdir_path, pattern)
         log.error("verify_extract: miscompilation with unknown oracle=%r", oracle)
         return False
 
@@ -859,7 +871,7 @@ def _generate_report(meta, result, workdir_path, issue_id):
     built from extract.json, result.json, and the reduced IR file.
     """
     bug_type = meta.get("type", "unknown")
-    crash_pattern = meta.get("crash_pattern", "")
+    pattern = meta.get("pattern", "")
 
     ir_file = result["ir_file"]
     ir_path = _safe_relative(workdir_path, ir_file)
@@ -872,7 +884,7 @@ def _generate_report(meta, result, workdir_path, issue_id):
     lines.append(f"# Reduced reproducer for llvm/llvm-project#{issue_id}")
     lines.append("")
     lines.append(f"**Bug type:** {bug_type}")
-    # pipeline and crash_pattern are inserted into inline markdown code
+    # pipeline and pattern are inserted into inline markdown code
     # spans; the reducer agent produces well-formed strings — agent
     # output is trusted.
     reduced_args = result.get("args", meta.get("args", ""))
@@ -885,8 +897,10 @@ def _generate_report(meta, result, workdir_path, issue_id):
             lines.append("**Scope:** middle-end")
         elif oracle == "lli":
             lines.append("**Scope:** backend")
-    if crash_pattern:
-        lines.append(f"**Crash pattern:** `{crash_pattern}`")
+    if bug_type == "crash" and pattern:
+        lines.append(f"**Crash pattern:** `{pattern}`")
+    elif bug_type == "miscompilation" and pattern:
+        lines.append(f"**Pattern:** {pattern}")
 
     lines.append("")
     lines.append("## Toolchain")
@@ -1135,20 +1149,17 @@ def reprocess_issue(issue):
         "2. Determine the oracle: 'opt' for opt/llvm-reduce bugs (middle-end), "
         "'llc' for llc/backend bugs. clang is ONLY used for IR generation — "
         "NEVER compile C to a native binary.\n"
-        "3. Reproduce the bug ONCE:\n"
-        "   - Crash (oracle=opt): opt <args> reproducer.ll -o /dev/null 2>&1 | grep -qF '<pattern>'\n"
-        "   - Crash (oracle=llc): llc <args> reproducer.ll -o /dev/null 2>&1 | grep -qF '<pattern>'\n"
-        "   - Miscompilation (oracle=opt): llubi_legacy --reduce-mode reproducer.ll > ref; "
-        "opt <args> reproducer.ll -S | llubi_legacy --reduce-mode -; outputs must differ\n"
-        "   - Miscompilation (oracle=llc): llubi_legacy --reduce-mode reproducer.ll > ref; "
-        "lli reproducer.ll > test; ref and test must differ (backend miscompilation)\n"
+        "3. Determine the pattern:\n"
+        "   - Crash: a literal substring from the actual crash output (e.g. 'Assertion `X` failed').\n"
+        "   - Miscompilation: 'wrong_output' (stdout differs), 'nonzero_exit' (oracle crashes or exits non-zero), "
+        "or 'infinite_loop' (oracle times out / hangs).\n"
         "4. CRITICAL: The moment you have reproduced the bug, write extract.json and "
         "STOP. Do NOT run more commands. Do NOT read IR files. "
         "If NOT reproduced after ONE attempt, try ONE variation.\n\n"
         "extract.json schema:\n"
         '{"type": "crash|miscompilation", "reproducer_file": "<filename>", '
         '"args": "<opt/llc arguments>", "oracle": "opt|llc", '
-        '"crash_pattern": "<literal substring from crash output, empty for miscompilation>"}'
+        '"pattern": "<crash substring, or wrong_output|nonzero_exit|infinite_loop>"}'
     )
     ok = opencode.run(
         agent="extractor",

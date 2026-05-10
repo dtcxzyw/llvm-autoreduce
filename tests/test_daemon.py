@@ -43,10 +43,28 @@ class TestValidateMeta:
         _validate_meta({
             "type": "crash",
             "reproducer_file": "inline_1.ll",
-            "crash_pattern": "failed at LICM.cpp",
+            "pattern": "failed at LICM.cpp",
             "args": "-passes='default<O2>'",
             "oracle": "opt",
         })
+
+    def test_miscomp_meta_ok(self):
+        _validate_meta({
+            "type": "miscompilation",
+            "reproducer_file": "repro.ll",
+            "pattern": "wrong_output",
+            "args": "-passes='default<O2>'",
+            "oracle": "opt",
+        })
+
+    def test_miscomp_bad_pattern_raises(self):
+        with pytest.raises(ValueError, match="wrong_output/nonzero_exit/infinite_loop"):
+            _validate_meta({
+                "type": "miscompilation",
+                "reproducer_file": "repro.ll",
+                "pattern": "bad_pattern",
+                "oracle": "opt",
+            })
 
     def test_empty_meta_raises(self):
         with pytest.raises(ValueError, match="type"):
@@ -54,39 +72,39 @@ class TestValidateMeta:
 
     def test_path_traversal_in_reproducer(self):
         with pytest.raises(ValueError, match="path separators"):
-            _validate_meta({"type": "crash", "crash_pattern": "test", "oracle": "opt", "reproducer_file": "../../etc/passwd"})
+            _validate_meta({"type": "crash", "pattern": "test", "oracle": "opt", "reproducer_file": "../../etc/passwd"})
 
     def test_backslash_in_reproducer(self):
         with pytest.raises(ValueError, match="path separators"):
-            _validate_meta({"type": "crash", "crash_pattern": "test", "oracle": "opt", "reproducer_file": "evil\\windows.cmd"})
+            _validate_meta({"type": "crash", "pattern": "test", "oracle": "opt", "reproducer_file": "evil\\windows.cmd"})
 
     def test_args_with_metachars_accepted(self):
         # Shell metacharacters in args are no longer blocked (R13).
-        _validate_meta({"type": "crash", "crash_pattern": "test", "oracle": "opt", "args": "-passes='foo' ; rm -rf /"})
-        _validate_meta({"type": "crash", "crash_pattern": "test", "oracle": "opt", "args": "$(whoami)"})
-        _validate_meta({"type": "crash", "crash_pattern": "test", "oracle": "opt", "args": "`id`"})
+        _validate_meta({"type": "crash", "pattern": "test", "oracle": "opt", "args": "-passes='foo' ; rm -rf /"})
+        _validate_meta({"type": "crash", "pattern": "test", "oracle": "opt", "args": "$(whoami)"})
+        _validate_meta({"type": "crash", "pattern": "test", "oracle": "opt", "args": "`id`"})
 
-    def test_crash_pattern_too_long(self):
-        with pytest.raises(ValueError, match="crash_pattern too long"):
-            _validate_meta({"type": "crash", "crash_pattern": "A" * 2001, "oracle": "opt"})
+    def test_pattern_too_long(self):
+        with pytest.raises(ValueError, match="pattern too long"):
+            _validate_meta({"type": "crash", "pattern": "A" * 2001, "oracle": "opt"})
 
-    def test_crash_type_requires_crash_pattern(self):
-        with pytest.raises(ValueError, match="crash requires crash_pattern"):
+    def test_crash_type_requires_pattern(self):
+        with pytest.raises(ValueError, match="crash requires pattern"):
             _validate_meta({"type": "crash", "oracle": "opt", "args": "-passes='default<O2>'"})
 
-    def test_crash_type_empty_crash_pattern_raises(self):
-        with pytest.raises(ValueError, match="crash requires crash_pattern"):
-            _validate_meta({"type": "crash", "crash_pattern": "", "oracle": "opt", "args": "-passes='default<O2>'"})
+    def test_crash_type_empty_pattern_raises(self):
+        with pytest.raises(ValueError, match="crash requires pattern"):
+            _validate_meta({"type": "crash", "pattern": "", "oracle": "opt", "args": "-passes='default<O2>'"})
 
-    def test_crash_pattern_boundary_ok(self):
-        _validate_meta({"type": "crash", "crash_pattern": "A" * 2000, "oracle": "opt"})
+    def test_pattern_boundary_ok(self):
+        _validate_meta({"type": "crash", "pattern": "A" * 2000, "oracle": "opt"})
 
     def test_invalid_bug_type(self):
         with pytest.raises(ValueError, match="type"):
             _validate_meta({"type": "exploit"})
 
     def test_default_o2_args_ok(self):
-        _validate_meta({"type": "crash", "crash_pattern": "test", "oracle": "opt", "args": "-passes='default<O2>'"})
+        _validate_meta({"type": "crash", "pattern": "test", "oracle": "opt", "args": "-passes='default<O2>'"})
 
 
 class TestValidateResult:
@@ -164,13 +182,13 @@ class TestValidateResult:
 
 class TestVerifyExtractConsistency:
     def test_clean_consistency_ok(self, tmp_path):
-        meta = {"type": "crash", "reproducer_file": "test.ll", "crash_pattern": "failed"}
+        meta = {"type": "crash", "reproducer_file": "test.ll", "pattern": "failed"}
         result = {"type": "crash"}
         (tmp_path / "test.ll").write_text("define void @f() { ret void }")
         assert verify_extract_consistency(meta, result, tmp_path) is True
 
     def test_bug_type_mismatch(self, tmp_path):
-        meta = {"type": "crash", "crash_pattern": "oops"}
+        meta = {"type": "crash", "pattern": "oops"}
         result = {"type": "miscompilation", "oracle": "llubi"}
         assert verify_extract_consistency(meta, result, tmp_path) is False
 
@@ -180,12 +198,12 @@ class TestVerifyExtractConsistency:
         assert verify_extract_consistency(meta, result, tmp_path) is False
 
     def test_reproducer_file_missing(self, tmp_path):
-        meta = {"type": "crash", "reproducer_file": "nonexistent.ll", "crash_pattern": "err"}
+        meta = {"type": "crash", "reproducer_file": "nonexistent.ll", "pattern": "err"}
         result = {"type": "crash"}
         assert verify_extract_consistency(meta, result, tmp_path) is False
 
     def test_reproducer_file_no_name_ok(self, tmp_path):
-        meta = {"type": "crash", "crash_pattern": "err"}
+        meta = {"type": "crash", "pattern": "err"}
         result = {"type": "crash"}
         assert verify_extract_consistency(meta, result, tmp_path) is True
 
