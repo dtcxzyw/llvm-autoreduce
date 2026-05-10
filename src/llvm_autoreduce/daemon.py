@@ -931,7 +931,6 @@ def reprocess_issue(issue):
                     issue_id, len(body), _MAX_BODY_BYTES)
         mark_dropped(issue_id, "body_too_large")
         mark_processed(issue_id)
-        workdir.cleanup(issue_id)
         return
 
     # Step 2: download raw materials (Godbolt sources, attachments, issue body).
@@ -980,7 +979,6 @@ def reprocess_issue(issue):
         log.warning("issue=%d review agent failed", issue_id)
         mark_dropped(issue_id, "review_agent_failed")
         mark_processed(issue_id)
-        workdir.cleanup(issue_id)
         return
 
     review_path = wd / "review.json"
@@ -988,7 +986,6 @@ def reprocess_issue(issue):
         log.warning("issue=%d review.json missing", issue_id)
         mark_dropped(issue_id, "review_json_missing")
         mark_processed(issue_id)
-        workdir.cleanup(issue_id)
         return
 
     try:
@@ -997,7 +994,6 @@ def reprocess_issue(issue):
         log.warning("issue=%d review.json invalid", issue_id)
         mark_dropped(issue_id, "review_json_invalid")
         mark_processed(issue_id)
-        workdir.cleanup(issue_id)
         return
 
     # ACCEPTED RISK (R16): Logging the full review.json verdict includes the
@@ -1013,14 +1009,12 @@ def reprocess_issue(issue):
         log.warning("issue=%d review.json validation failed", issue_id)
         mark_dropped(issue_id, "review_validation_failed")
         mark_processed(issue_id)
-        workdir.cleanup(issue_id)
         return
 
     if verdict.get("malicious"):
         log.info("issue=%d skipped: malicious", issue_id)
         mark_dropped(issue_id, "malicious")
         mark_processed(issue_id)
-        workdir.cleanup(issue_id)
         return
 
     # Step 3: extract reproducer metadata (bash allowed).
@@ -1043,7 +1037,6 @@ def reprocess_issue(issue):
         log.warning("issue=%d extractor agent failed", issue_id)
         mark_dropped(issue_id, "extractor_agent_failed")
         mark_processed(issue_id)
-        workdir.cleanup(issue_id)
         return
 
     extract_path = wd / "extract.json"
@@ -1054,13 +1047,11 @@ def reprocess_issue(issue):
             log.warning("issue=%d extract.json invalid, skip", issue_id)
             mark_dropped(issue_id, "extract_json_invalid")
             mark_processed(issue_id)
-            workdir.cleanup(issue_id)
             return
     else:
         log.warning("issue=%d extract.json missing, skip", issue_id)
         mark_dropped(issue_id, "extract_json_missing")
         mark_processed(issue_id)
-        workdir.cleanup(issue_id)
         return
     log.info("issue=%d extract=%s", issue_id, json.dumps(meta))
 
@@ -1072,7 +1063,6 @@ def reprocess_issue(issue):
         log.warning("issue=%d extract reported type=unrelated, skip", issue_id)
         mark_dropped(issue_id, "extract_bug_unrelated")
         mark_processed(issue_id)
-        workdir.cleanup(issue_id)
         return
 
     try:
@@ -1081,7 +1071,6 @@ def reprocess_issue(issue):
         log.warning("issue=%d extract.json validation failed", issue_id)
         mark_dropped(issue_id, "extract_validation_failed")
         mark_processed(issue_id)
-        workdir.cleanup(issue_id)
         return
 
     # Step 4: reduction.
@@ -1111,7 +1100,6 @@ def reprocess_issue(issue):
         log.warning("issue=%d reduce agent failed", issue_id)
         mark_dropped(issue_id, "reducer_agent_failed")
         mark_processed(issue_id)
-        workdir.cleanup(issue_id)
         return
 
     result_path = wd / "result.json"
@@ -1119,7 +1107,6 @@ def reprocess_issue(issue):
         log.warning("issue=%d result.json missing", issue_id)
         mark_dropped(issue_id, "result_json_missing")
         mark_processed(issue_id)
-        workdir.cleanup(issue_id)
         return
 
     try:
@@ -1128,7 +1115,6 @@ def reprocess_issue(issue):
         log.warning("issue=%d result.json invalid", issue_id)
         mark_dropped(issue_id, "result_json_invalid")
         mark_processed(issue_id)
-        workdir.cleanup(issue_id)
         return
 
     try:
@@ -1137,7 +1123,6 @@ def reprocess_issue(issue):
         log.warning("issue=%d result.json validation failed", issue_id)
         mark_dropped(issue_id, "result_validation_failed")
         mark_processed(issue_id)
-        workdir.cleanup(issue_id)
         return
 
     # Step 5: verify before submitting
@@ -1145,13 +1130,11 @@ def reprocess_issue(issue):
         log.warning("issue=%d reducer reported error: %s", issue_id, result["error"])
         mark_dropped(issue_id, "reducer_error")
         mark_processed(issue_id)
-        workdir.cleanup(issue_id)
         return
     if not verify_extract_consistency(meta, result, wd):
         log.warning("issue=%d extract-result consistency check failed", issue_id)
         mark_dropped(issue_id, "consistency_check_failed")
         mark_processed(issue_id)
-        workdir.cleanup(issue_id)
         return
     # ACCEPTED RISK (F13): No retry on verify failures — if the verification
     # subprocess times out or the toolchain signals a non-reproducible result,
@@ -1169,7 +1152,6 @@ def reprocess_issue(issue):
         log.warning("issue=%d verify failed", issue_id)
         mark_dropped(issue_id, "verify_failed")
         mark_processed(issue_id)
-        workdir.cleanup(issue_id)
         return
     log.info("issue=%d verify pass", issue_id)
 
@@ -1189,7 +1171,6 @@ def reprocess_issue(issue):
         log.exception("issue=%d report generation failed", issue_id)
         mark_dropped(issue_id, "report_generation_failed")
         mark_processed(issue_id)
-        workdir.cleanup(issue_id)
         return
     # ACCEPTED RISK: meta['type'] uses direct key access (not .get)
     # because _validate_meta already guarantees the key is present with a
@@ -1214,10 +1195,8 @@ def reprocess_issue(issue):
         log.exception("issue=%d submission failed", issue_id)
         mark_dropped(issue_id, "submission_failed")
         mark_processed(issue_id)
-        workdir.cleanup(issue_id)
         return
     mark_processed(issue_id)
-    workdir.cleanup(issue_id)
 
 
 def main():

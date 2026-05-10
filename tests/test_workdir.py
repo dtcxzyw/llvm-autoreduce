@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from llvm_autoreduce.workdir import cleanup, create, read, read_json, write, write_json
+from llvm_autoreduce.workdir import create, read, read_json, write, write_json
 
 
 class TestCreate:
@@ -78,17 +78,3 @@ class TestReadWrite:
         assert read_json(f) == {}
 
 
-class TestCleanup:
-    def test_removes_directory(self, monkeypatch, tmp_path):
-        monkeypatch.setattr("llvm_autoreduce.workdir.WORK_ROOT", tmp_path)
-        monkeypatch.setattr("llvm_autoreduce.workdir.TASKS_DIR", tmp_path / "tasks")
-        wd = create(7)
-        (wd / "data.txt").write_text("temp")
-        assert wd.exists()
-        cleanup(7)
-        assert not wd.exists()
-
-    def test_cleanup_nonexistent_no_error(self, monkeypatch, tmp_path):
-        monkeypatch.setattr("llvm_autoreduce.workdir.WORK_ROOT", tmp_path)
-        monkeypatch.setattr("llvm_autoreduce.workdir.TASKS_DIR", tmp_path / "tasks")
-        cleanup(99999)

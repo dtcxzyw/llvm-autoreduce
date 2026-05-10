@@ -66,7 +66,7 @@ def _env():
 
 
 def run(agent, workdir, prompt, timeout, shutdown_check=None):
-    log_path = workdir / "log.txt"
+    log_path = workdir / f"{agent}.log"
     # ACCEPTED RISK (F6): Model name is hardcoded — not configurable via
     # environment variable or config file.
     cmd = [

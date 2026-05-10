@@ -2,7 +2,6 @@
 
 import json
 import logging
-import shutil
 from pathlib import Path
 
 from .config import WORK_ROOT
@@ -51,8 +50,3 @@ def write_json(filepath, obj):
     Path(filepath).write_text(json.dumps(obj, indent=2))
 
 
-def cleanup(issue_id):
-    path = TASKS_DIR / str(issue_id)
-    if path.exists():
-        shutil.rmtree(path)
-        log.info("workdir cleaned: %s", path)
