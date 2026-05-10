@@ -1026,27 +1026,25 @@ def reprocess_issue(issue):
     # would produce lower-quality extract.json and waste reducer agent
     # time on non-reproducible inputs.
     extract_prompt = (
-        "Your task is ONLY to produce a validated reproducer and classify the bug. "
-        "Read issue.md and inspect all files in this directory.\n\n"
-        "Procedure:\n"
-        "1. If the reproducer is C source: compile to LLVM IR with "
+        "Your ONLY task: produce a validated reproducer and classify the bug. "
+        "Read issue.md for context, then find the reproducer.\n\n"
+        "Procedure (do NOT deviate):\n"
+        "1. If the reproducer is C source: "
         "clang -x c -S -emit-llvm -O0 <source> -o reproducer.ll\n"
-        "2. Reproduce the bug ONCE:\n"
-        "   - Crash: run opt with the reported pipeline on reproducer.ll and capture "
-        "the crash output (stderr). Verify the crash is reproducible.\n"
-        "   - Miscompilation: run opt with the reported pipeline on reproducer.ll to "
-        "produce transformed IR, then compare llubi_legacy --reduce-mode output (reference vs transformed). "
-        "Verify the outputs differ.\n"
-        "3. If the bug does NOT reproduce with the reported pipeline, try at most "
-        "ONE alternative (e.g. different optimization level or legacy pass manager).\n"
-        "4. Write extract.json with your findings.\n\n"
-        "CRITICAL: Write extract.json and STOP. Do NOT read or diff IR files. "
-        "Do NOT investigate root causes. Do NOT examine specific passes. "
-        "The reducer agent handles all further analysis.\n\n"
+        "2. Try to reproduce the bug:\n"
+        "   - Crash: opt -passes='<pipeline>' reproducer.ll -o /dev/null 2>&1 | "
+        "grep -qF '<crash_pattern>'\n"
+        "   - Miscompilation: opt -passes='<pipeline>' reproducer.ll -S | "
+        "llubi_legacy --reduce-mode --max-steps 1000000 - > /dev/null; echo $?\n"
+        "3. If reproduced: STOP immediately and write extract.json. If NOT reproduced, "
+        "try ONE variation (e.g. different optimization level or legacy -O2).\n"
+        "4. CRITICAL: The moment you have reproduced the bug, write extract.json and "
+        "STOP. Do NOT run more commands. Do NOT inspect IR files. "
+        "Do NOT investigate why the bug happens.\n\n"
         "extract.json schema:\n"
         '{"type": "crash|miscompilation", "reproducer_file": "<filename>", '
         '"pipeline": "<opt arguments that trigger the bug>", '
-        '"crash_pattern": "<literal substring from stderr, empty for miscompilation>"}'
+        '"crash_pattern": "<literal substring from crash output, empty for miscompilation>"}'
     )
     ok = opencode.run(
         agent="extractor",

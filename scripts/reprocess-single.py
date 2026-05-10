@@ -70,6 +70,11 @@ def main():
     }
 
     # Step 4: run the full pipeline (label filter → review → extract → reduce → verify → report)
+    # Clean stale workdir from previous runs so agents don't waste time on old files.
+    import shutil
+    old_wd = config.WORK_ROOT / "tasks" / str(issue_id)
+    if old_wd.exists():
+        shutil.rmtree(old_wd)
     daemon.reprocess_issue(issue)
 
     log.info("reprocess-single done for issue=%d", args.issue_id)
