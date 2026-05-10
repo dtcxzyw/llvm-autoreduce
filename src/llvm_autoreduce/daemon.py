@@ -466,8 +466,12 @@ def verify_llubi(result, workdir_path):
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
         )
         if test.returncode != 0:
-            log.error("llubi test crashed: signal=%d stderr=%s", -test.returncode if test.returncode < 0 else test.returncode, test.stderr[:200])
-            return False
+            # Crash / non-zero exit of the transformed llubi execution is a
+            # confirmed miscompilation — the target pass caused the oracle to
+            # crash or produce invalid output. The reference already passed.
+            log.info("llubi test crashed (signal=%d) — confirmed miscompilation",
+                     -test.returncode if test.returncode < 0 else test.returncode)
+            return True
         return ref.stdout != test.stdout
     except subprocess.TimeoutExpired:
         log.error("verify llubi timeout")
@@ -601,10 +605,12 @@ def verify_lli(result, workdir_path):
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
         )
         if test.returncode != 0:
-            log.error("lli verify: lli test failed: signal=%d stderr=%s",
-                      -test.returncode if test.returncode < 0 else test.returncode,
-                      test.stderr[:200])
-            return False
+            # Crash / non-zero exit of the lli JIT execution is a confirmed
+            # backend miscompilation — the JIT produced invalid code or crashed.
+            # The llubi reference already passed.
+            log.info("lli test crashed (signal=%d) — confirmed backend miscompilation",
+                     -test.returncode if test.returncode < 0 else test.returncode)
+            return True
         return ref.stdout != test.stdout
     except subprocess.TimeoutExpired:
         log.error("verify lli timeout")
