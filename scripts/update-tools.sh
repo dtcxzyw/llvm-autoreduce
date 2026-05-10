@@ -179,24 +179,14 @@ if [ "$FIRST_BUILD" = true ]; then
     exit 0
 fi
 
-# ---- check if any upstream changes ----
-
-if [ "$LLVM_CURRENT" = "$LLVM_LATEST" ] && [ "$ALIVE2_CURRENT" = "$ALIVE2_LATEST" ] && [ "$LLUBI_CURRENT" = "$LLUBI_LATEST" ]; then
-    echo "UP-TO-DATE: no changes"
-    exit 0
-fi
-
 # ---- attempt incremental update (all-or-nothing triple rollback) ----
 # Build all changed components. If any build fails, roll back the entire
 # triple (LLVM, alive2, llubi) to the last known-good release to preserve
 # ABI compatibility across the toolchain.
 
-NEED_LLVM=false
-NEED_ALIVE2=false
-NEED_LLUBI=false
-[ "$LLVM_CURRENT" != "$LLVM_LATEST" ] && NEED_LLVM=true
-[ "$ALIVE2_CURRENT" != "$ALIVE2_LATEST" ] && NEED_ALIVE2=true
-[ "$LLUBI_CURRENT" != "$LLUBI_LATEST" ] && NEED_LLUBI=true
+NEED_LLVM=true
+NEED_ALIVE2=true
+NEED_LLUBI=true
 
 FAILED=false
 
