@@ -41,7 +41,15 @@ You are an LLVM bug reduction agent. Read `extract.json` to determine the bug ty
 
 **CRITICAL: Reduction operates exclusively on LLVM IR.** Never compile IR to native binaries with `clang` for verification — the oracle tools (llubi_legacy, alive-tv, lli) work directly on IR. If the reproducer is C/C++ source, the extractor agent has already compiled it to `.ll`.
 
-**CRITICAL: Always bisect to a single pass before reduce.** First use `opt-bisect-limit` binary search to identify the exact pass that triggers the bug, then run `llvm-reduce` with only that single pass (e.g. `-passes=licm`, not `-passes='default<O2>'`).
+**CRITICAL: Always bisect to a single pass before reduce.** First use `opt-bisect-limit` to identify the exact pass that triggers the bug, then run `llvm-reduce` with only that single pass (e.g. `-passes=licm`, not `-passes='default<O2>'`).
+
+**When single pass does NOT trigger the bug:** This is usually an analysis invalidation issue — the buggy pass depends on cached analysis results from a prior pass that don't exist when running the pass in isolation. Solutions (in priority order, derived from the crash log which shows the exact pass specification that crashed):
+1. Insert a `require<analysis>` before the pass to force analysis invalidation (e.g. `-passes='require<aa>,licm'`). Common analyses to require: `aa` (alias analysis), `scalar-evolution`, `domtree`, `loop-info`, `memoryssa`.
+2. Use `loop()` to wrap loop-dependent passes: `-passes='loop(licm)'`.
+3. Specify pass options with `<>`: `-passes='licm<no-verify-fixpoint>'`. The exact options used in the original pipeline are visible in the crash log.
+4. Insert a `print<analysis>` pass as a lighter-weight alternative to `require`: `-passes='print<aa>,licm'`.
+
+**IMPORTANT: Do NOT browse or read LLVM source code** to determine pass dependencies. The crash log from `opt-bisect-limit=-1` already contains the full pass pipeline specification with wraps and options — extract the relevant prefix from there.
 
 **CRITICAL — lli oracle preprocessing:** When using the `lli` oracle for miscompilation reduction, the IR's `main()` function must NOT depend on command-line arguments (`argc`/`argv`). `llubi_legacy` does not pass command-line arguments while `lli` does, so an unmodified `main()` that uses `argc`/`argv` will produce different outputs even on a correct backend. Before using `lli`, either strip `argc`/`argv` references from the IR or confirm the IR does not use command-line arguments.
 
