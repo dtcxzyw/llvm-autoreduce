@@ -23,8 +23,6 @@ opt -passes='<pipeline>' <reproducer_file> 2>&1 | grep -qF "<crash_pattern>"
 ```
 For llc crashes: `llc <reproducer_file> 2>&1 | grep -qF "<crash_pattern>"`.
 
-**Crash in lli is not supported.** If extract.json indicates a crash from lli (the crash output mentions `lli` or JIT), write result.json with an error field immediately. The daemon rejects `tool: "lli"` for crash type.
-
 ### 3. opt-bisect-limit binary search to find single pass (opt crashes only)
 
 For llc crashes, skip to step 5.
@@ -33,7 +31,7 @@ For llc crashes, skip to step 5.
 
 First, get the total pass count:
 ```
-opt -opt-bisect-limit=-1 -passes='<pipeline>' <reproducer_file> -S -o /dev/null 2>&1   → total=N
+timeout 60 opt -opt-bisect-limit=-1 -passes='<pipeline>' <reproducer_file> -S -o /dev/null 2>&1   → total=N
 ```
 Binary search lo=1, hi=N:
 ```
@@ -45,13 +43,7 @@ Converge to M (the first pass that triggers the crash).
 
 ### 4. Extract single pass name and capture IR before it
 
-The bisect log prints the last pass run before the crash. Use that output to determine the exact pass name (e.g., `-passes=licm`). Do NOT guess the pass name from filenames in crash backtraces.
-
-To see pass names explicitly:
-```
-opt -opt-bisect-limit=M -passes='<pipeline>' <reproducer_file> -S -o /dev/null 2>&1
-```
-The last line before the crash lists the failing pass by its registered name — use that name directly.
+The bisect log prints the last pass run before the crash (e.g. `BISECT: running pass (N) InstCombine on ...`). Convert this to the `-passes=` form (e.g. `-passes=instcombine`). Do NOT guess the pass name from filenames in crash backtraces.
 
 Capture the IR just before the crashing pass:
 ```
@@ -61,8 +53,6 @@ opt -opt-bisect-limit=M-1 -passes='<pipeline>' <reproducer_file> -S > before.ll
 ### 5. Handle llc crashes
 
 If crash is in llc (not opt), skip bisect and go directly to llvm-reduce. The interestingness script runs llc and checks for the crash signature — no pass or pipeline is involved.
-
-**Crash in lli is not supported** — the daemon will reject `result.json` with `tool: "lli"` for crash type. If the issue reports an lli crash, write result.json with an error field.
 
 ### 6. llvm-reduce with ONLY the single pass
 

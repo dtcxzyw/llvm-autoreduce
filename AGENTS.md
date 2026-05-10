@@ -67,9 +67,27 @@
 
 ## Design Philosophy
 
-### Agent as Oracle
+### Agent as Oracle (首要原则)
 
-The reducer and extractor agents are trusted as authoritative oracles. Every field produced by an agent (`args`, `pipeline`, `crash_pattern`, `alive2_args`, `llubi_args`, `lli_args`, `pass_name`, `oracle`, `reference_file`, `ir_file`) is accepted verbatim. The daemon never second-guesses or overrides agent decisions — the agent's `result.json` is the single source of truth. The daemon's `verify()` step confirms that the bug still reproduces with the reported tool and arguments but does NOT re-derive the pass, oracle, or pipeline.
+**All agents are trusted LLVM domain experts.** They possess deep knowledge of LLVM IR, passes, toolchain binaries, oracle semantics, and common bug patterns. Prompts give broad strategic direction — they never spell out step-by-step procedures that the agent already understands. Do not write prompts that treat the agent as a novice; trust its expertise to fill in implementation details.
+
+Every field produced by an agent (`args`, `pipeline`, `crash_pattern`, `alive2_args`, `llubi_args`, `lli_args`, `pass_name`, `oracle`, `reference_file`, `ir_file`) is accepted verbatim. The daemon never second-guesses or overrides agent decisions — the agent's `result.json` is the single source of truth. The daemon's `verify()` step confirms that the bug still reproduces with the reported tool and arguments but does NOT re-derive the pass, oracle, or pipeline.
+
+### Prompt Design Rules
+
+When writing agent definitions, prompts, and skill files, follow these rules:
+
+1. **Security reviewer — broad patterns, not exhaustive lists.** The agent knows what malicious code looks like. Describe the categories of concern (process execution, file tampering, network operations, obfuscation) and use "including but not limited to" language. The agent understands both C source patterns and LLVM IR patterns (`declare`/`call` to external functions). Do not enumerate every function name — trust the agent's security knowledge.
+
+2. **Extractor — reproduce first, never trust issue text alone.** The extractor MUST run the toolchain to reproduce the bug before extracting metadata. Stack traces and crash output in the issue body are reference hints only — the crash_pattern field MUST come from actual toolchain output reproduced in the workdir. This validates the reproducer is functional before the reducer spends time on it.
+
+3. **Skills — timeouts on every toolchain command.** Every direct invocation of `opt`, `llc`, `llubi_legacy`, `alive-tv`, `lli`, or `clang` outside of `interestingness.sh` MUST include a `timeout` wrapper. Default `--max-steps 1000000` is sufficient for llubi_legacy — report timeouts as potential infinite loops. `interestingness.sh` commands already carry timeouts but standalone reproduction/bisect commands must also be protected.
+
+4. **Pass name conversion — agent domain knowledge.** Agents know that `opt-bisect-limit` outputs pass names in CamelCase (e.g. `InstCombine`) and that `-passes=` accepts kebab-case (e.g. `instcombine`). Do not explain this conversion — provide at most a single example as hint. The agent understands LLVM's pass naming conventions.
+
+5. **lli crash = miscompilation.** The daemon's `_validate_result` rejects `tool: "lli"` for crash type. The extractor handles this: when an issue reports an lli crash, the extractor first tries `llc` on the same IR. If `llc` also crashes → classify as `crash` (llc). If `llc` does NOT crash → classify as `miscompilation` (the lli crash is backend miscompilation, not a crash bug). The reducer never sees an lli crash classification.
+
+6. **Always provide full JSON schema in prompts.** Every prompt that asks an agent to produce JSON MUST include the complete schema with all required fields for every supported bug type. Agents are experts at content but need the exact field names and structure the daemon expects.
 
 ### llubi_legacy / lli Equivalence
 
@@ -86,7 +104,3 @@ Both crash and miscompilation pipelines MUST first bisect the full pipeline to i
 ### Interestingness Script Timeouts
 
 Every subprocess inside `interestingness.sh` (opt, llubi_legacy, alive-tv, lli, llc) MUST include a timeout via the `timeout` command to prevent a single hanging candidate from consuming the entire reduction time budget.
-
-### lli Crash → llc Conversion
-
-The crash reduction pipeline does NOT support `lli` (JIT) crashes — `_validate_result` rejects `tool: "lli"` for crash type. When an issue reports an lli crash, the extractor agent MUST attempt to reproduce the crash with `llc` before classifying it. If `llc` crashes on the same IR with the same signature, the issue is classified as an `llc` crash. If `llc` does not crash, the issue is classified as `unrelated` — lli-only crashes are not in scope. This conversion happens at extraction time so the reducer never sees an lli crash classification.

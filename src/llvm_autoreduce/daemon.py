@@ -1094,7 +1094,7 @@ def reprocess_issue(issue):
     #        the reducer. Multi-file reproducer scenarios (e.g. inter-module
     #        bugs requiring multiple .ll files) are not supported and will
     #        silently fail reduction.
-    reduce_prompt = "Read extract.json to determine the bug type. Load the appropriate skill (llvm-crash-reduce or llvm-miscompile-reduce) and reduce the reproducer. Note: lli crashes are not supported for crash reduction — if the reproducer crashes in lli (not opt/llc), write result.json with an error field. Write result.json."
+    reduce_prompt = "Read extract.json to determine the bug type. Load the appropriate skill (llvm-crash-reduce or llvm-miscompile-reduce) and reduce the reproducer. Write result.json."
     ok = opencode.run(
         agent="reducer",
         workdir=wd,

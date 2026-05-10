@@ -27,7 +27,7 @@ First, confirm the miscompilation is reproducible with the oracle on the pipelin
 **llubi_legacy:**
 ```
 set -o pipefail
-llubi_legacy --max-steps 1000000 repro.ll > ref_ubi
+timeout 60 llubi_legacy --max-steps 1000000 repro.ll > ref_ubi
 ! opt -passes='<pipeline>' repro.ll -S | llubi_legacy --max-steps 1000000 - | diff -q ref_ubi -
 ```
 **ACCEPTED RISK:** Crashes in the pipeline (opt or llubi_legacy segfault) are treated as miscompilation: `pipefail` makes the pipeline exit non-zero on crash, `!` inverts that to exit 0 ("miscompilation found"). This affects both the reproduction check and the bisect step — a buggy pass that crashes will be incorrectly selected as the miscompilation trigger. The daemon's final `verify()` step independently checks the reduced IR and will reject cases where the miscompilation does not actually reproduce, so a crash-confused reduction is caught at verification time.
@@ -52,7 +52,7 @@ Use `lli` only when the bug is in backend codegen/instruction selection. llubi_l
 
 ```
 set -o pipefail
-llubi_legacy --max-steps 1000000 repro.ll > ref_ubi
+timeout 60 llubi_legacy --max-steps 1000000 repro.ll > ref_ubi
 ! opt -passes='<pipeline>' repro.ll -S | lli - | diff -q ref_ubi -
 ```
 **ACCEPTED RISK:** Crash → miscompilation. Same `!` + `pipefail` inversion as llubi reproduction (line 33). The daemon's verify step independently confirms the miscompilation.
@@ -68,14 +68,14 @@ Use the **first** oracle that confirmed the miscompilation in step 1. Default: `
 
 First, get the total pass count:
 ```
-opt -opt-bisect-limit=-1 -passes='<pipeline>' repro.ll -S -o /dev/null 2>&1   → total=N
+timeout 60 opt -opt-bisect-limit=-1 -passes='<pipeline>' repro.ll -S -o /dev/null 2>&1   → total=N
 ```
 
 **IMPORTANT: Use `set -o pipefail` for all bisect comparisons.** Without pipefail, if the oracle crashes (e.g., llubi_legacy segfaults), the empty output will be mistaken for a miscompilation. Note: even with pipefail, a crash is still treated as miscompilation because `!` inverts the non-zero pipeline exit to 0 (see ACCEPTED RISK annotations on the crash rows below).
 
 Pre-compute the reference output once (same for all bisect iterations):
 ```
-llubi_legacy --max-steps 1000000 repro.ll > ref_ubi
+timeout 60 llubi_legacy --max-steps 1000000 repro.ll > ref_ubi
 ```
 
 **llubi_legacy oracle — bisect:**
@@ -92,7 +92,7 @@ Converge to M (the first pass that introduces the miscompilation).
 **alive-tv oracle — bisect:**
 Binary search lo=1, hi=N:
 ```
-opt -opt-bisect-limit=M -passes='<pipeline>' repro.ll -S > step.ll
+timeout 60 opt -opt-bisect-limit=M -passes='<pipeline>' repro.ll -S > step.ll
 alive-tv --disable-undef-input --smt-to=10000 repro.ll step.ll
 ```
 Check the output:
@@ -104,7 +104,7 @@ Check the output:
 **lli oracle — bisect:**
 Pre-compute the reference output once:
 ```
-llubi_legacy --max-steps 1000000 repro.ll > ref_ubi
+timeout 60 llubi_legacy --max-steps 1000000 repro.ll > ref_ubi
 ```
 Binary search lo=1, hi=N:
 ```
@@ -118,7 +118,7 @@ Converge to M.
 
 ### 4. Extract the single pass name and capture IR before it
 
-The bisect log prints the last pass run before the miscompilation. Use that output to determine the exact pass name. Do NOT guess from filenames.
+The bisect log prints the last pass run before the miscompilation (e.g. `BISECT: running pass (N) GVN on ...`). Convert this to the `-passes=` form (e.g. `-passes=gvn`). Do NOT guess from filenames.
 
 Capture the IR just before the bad pass:
 ```
