@@ -1110,7 +1110,8 @@ def reprocess_issue(issue):
     # Unlabeled issues are still processed.
     issue_labels = {lbl["name"].lower() for lbl in issue.get("labels", [])}
     matched = {lbl for lbl in issue_labels
-               for pfx in config.SKIP_LABEL_PREFIXES if lbl.startswith(pfx)}
+               for pfx in config.SKIP_LABEL_PREFIXES
+               if lbl.startswith(pfx) and lbl not in config.SKIP_LABEL_ALLOW}
     if matched:
         log.info("issue=%d skipped: label match %s", issue_id, matched)
         mark_dropped(issue_id, "label_skip")

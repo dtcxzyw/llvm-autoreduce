@@ -74,13 +74,16 @@ SKIP_LABEL_PREFIXES = frozenset(
         "duplicate",
         "invalid",
         "wontfix",
-        # Clang tooling (not LLVM core bugs)
-        # NOTE: "clang:" prefix is intentionally excluded — Clang IRGen
-        # bugs (clang:codegen) produce miscompiled LLVM IR and are
-        # legitimate targets for the daemon.
+        # Build/infra
+        "build-problem",
+        "infra:",
+        # Clang diagnostics / tooling (not LLVM core bugs)
+        "clang:diagnostics",
         "clang-tidy",
         "clang-format",
+        "clang:as-a-library",
         "clangd",
+        "clang-tools-extra",
         "check-request",
         # Non-LLVM subprojects
         "mlir",
@@ -98,5 +101,15 @@ SKIP_LABEL_PREFIXES = frozenset(
         "undefined behavior",
         "llvm-reduce",
         "coroutines",
+    }
+)
+
+# Exact labels that are NEVER skipped, even if their prefix matches
+# SKIP_LABEL_PREFIXES. Currently protects tools:llc and tools:opt from
+# the blanket tools: exclusion — these are legitimate LLVM backend bugs.
+SKIP_LABEL_ALLOW = frozenset(
+    {
+        "tools:llc",
+        "tools:opt",
     }
 )
