@@ -238,6 +238,10 @@ def _run_process(cmd, **kwargs):
     timeout = kwargs.pop("timeout", None)
     text = kwargs.pop("text", False)
     encoding = kwargs.pop("encoding", "utf-8")
+    kwargs.pop("stdout", None)
+    kwargs.pop("stderr", None)
+    stdout = kwargs.pop("stdout", subprocess.PIPE)
+    stderr = kwargs.pop("stderr", subprocess.PIPE)
 
     old = resource.getrlimit(resource.RLIMIT_AS)
     limit = 8 * 1024 ** 3
@@ -247,7 +251,7 @@ def _run_process(cmd, **kwargs):
         old = None
     try:
         proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kwargs,
+            cmd, stdout=stdout, stderr=stderr, **kwargs,
         )
     finally:
         if old is not None:
