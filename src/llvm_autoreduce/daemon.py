@@ -647,6 +647,9 @@ def verify_alive2(result, workdir_path):
 # consistent output for correct backends.
 def verify_lli(result, workdir_path, pattern=""):
     safe_ir = _safe_relative(workdir_path, result["ir_file"])
+    if not _check_target_triple_x86(result["ir_file"], workdir_path):
+        log.error("lli verify: reproducer missing x86_64 target triple")
+        return False
     args = result.get("args", "")
     # lli_args and llubi_args are produced by the reducer agent (trusted oracle).
     lli_args = result.get("lli_args", "")
@@ -783,6 +786,7 @@ def verify_extract_consistency(meta, result, workdir_path):
 
 
 _MAIN_NO_PARAMS_RE = re.compile(r"define\s+\S+\s+@main\s*\(\s*\)")
+_TARGET_TRIPLE_X86_RE = re.compile(r'target\s+triple\s*=\s*"x86_64')
 
 
 def _check_main_no_params(reproducer_file, workdir_path):
@@ -798,6 +802,28 @@ def _check_main_no_params(reproducer_file, workdir_path):
     except (ValueError, OSError):
         return False
     return bool(_MAIN_NO_PARAMS_RE.search(content))
+
+
+def _check_target_triple_x86(reproducer_file, workdir_path):
+    """Verify that the IR file has an x86_64 target triple.
+
+    lli runs on the local x86_64 host and cannot JIT IR compiled for other
+    architectures. Backend miscompilation reproducers MUST declare
+    target triple = "x86_64...".
+
+    ACCEPTED RISK (F74): The regex checks for a literal "x86_64 substring
+    in the target triple string. It will also match e.g.
+    target triple = "x86_64-unknown-linux-gnu" (valid) and
+    target triple = "x86_64h-apple-darwin" (valid for x86_64 on Darwin).
+    It will NOT match "x86_64" inside comments or unrelated fields
+    because the regex requires the `target triple = "` prefix.
+    """
+    safe_ir = _safe_relative(workdir_path, reproducer_file)
+    try:
+        content = workdir.read(safe_ir)
+    except (ValueError, OSError):
+        return False
+    return bool(_TARGET_TRIPLE_X86_RE.search(content))
 
 
 def verify_extract(meta, workdir_path):
@@ -837,6 +863,9 @@ def verify_extract(meta, workdir_path):
             reproducer = meta["reproducer_file"]
             if not _check_main_no_params(reproducer, workdir_path):
                 log.warning("verify_extract: backend miscomp reproducer main() has params")
+                return False
+            if not _check_target_triple_x86(reproducer, workdir_path):
+                log.warning("verify_extract: backend miscomp reproducer missing x86_64 target triple")
                 return False
         result = {
             "ir_file": meta["reproducer_file"],
