@@ -1034,7 +1034,7 @@ def _generate_report(meta, result, workdir_path, issue_id):
     if bug_type == "crash" and pattern:
         lines.append(f"**Crash pattern:** `{pattern}`")
     elif bug_type == "miscompilation" and pattern:
-        lines.append(f"**Pattern:** {pattern}")
+        lines.append(f"**Pattern:** `{pattern}`")
 
     lines.append("")
     lines.append("## Toolchain")
