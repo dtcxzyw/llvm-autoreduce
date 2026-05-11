@@ -86,6 +86,7 @@ SKIP_LABEL_PREFIXES = frozenset(
         "clang-tools-extra",
         "check-request",
         # Non-LLVM subprojects
+        "hlsl",
         "mlir",
         "flang",
         "lld:",
