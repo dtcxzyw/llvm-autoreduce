@@ -2,6 +2,7 @@
 
 import logging
 import subprocess
+import time
 
 from tenacity import retry, stop_after_attempt, wait_exponential_jitter
 
@@ -36,16 +37,52 @@ class BuildError(Exception):
     pass
 
 
+def _wait_interruptible(proc, timeout):
+    """Wait for subprocess with 1-second shutdown polling.
+
+    Calls config.check_shutdown() each second; raises SystemExit if
+    a signal was received. On timeout, kills the process and raises
+    TimeoutExpired.
+    """
+    from . import config
+
+    deadline = time.time() + timeout
+    while True:
+        config.check_shutdown()
+        try:
+            proc.wait(timeout=1)
+            return
+        except subprocess.TimeoutExpired as exc:
+            if time.time() >= deadline:
+                proc.kill()
+                proc.wait()
+                raise subprocess.TimeoutExpired(proc.args, timeout) from exc
+
+
 def _run_git(args, *, cwd=None):
-    return subprocess.run(
-        ["git", *args],
+    cmd = ["git", *args]
+    proc = subprocess.Popen(
+        cmd,
         cwd=cwd,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        timeout=300,
-        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
+    try:
+        _wait_interruptible(proc, 300)
+    except subprocess.TimeoutExpired:
+        raise
+    except SystemExit:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+        raise
+    out, err = proc.communicate()  # drain any remaining output
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, cmd, out, err)
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
 
 @retry(**GIT_RETRY)
@@ -71,18 +108,34 @@ def _sync_git():
 def update_all():
     log.info("toolchain update start")
     _sync_git()
-    proc = subprocess.run(
-        ["bash", str(UPDATE_SCRIPT), "--skip-git"],
-        cwd=str(PROJECT_ROOT),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        timeout=3600,
-    )
+    build_log = WORK_DIR / "build.log"
+    with open(build_log, "w") as f:
+        proc = subprocess.Popen(
+            ["bash", str(UPDATE_SCRIPT), "--skip-git"],
+            cwd=str(PROJECT_ROOT),
+            stdout=f,
+            stderr=subprocess.STDOUT,
+        )
+        try:
+            _wait_interruptible(proc, 3600)
+        except subprocess.TimeoutExpired:
+            log.error("toolchain update timed out")
+            raise
+        except SystemExit:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+            raise
     if proc.returncode == 2:
-        log.warning("toolchain update rolled back to known-good:\n%s\n%s", proc.stdout, proc.stderr)
+        with open(build_log) as f_log:
+            log.warning("toolchain update rolled back to known-good:\n%s", f_log.read())
         return
     if proc.returncode != 0:
-        log.error("toolchain update failed:\n%s\n%s", proc.stdout, proc.stderr)
-        raise BuildError(proc.stderr)
+        with open(build_log) as f_log:
+            err = f_log.read()
+        log.error("toolchain update failed:\n%s", err)
+        raise BuildError(err)
     log.info("toolchain update ok")

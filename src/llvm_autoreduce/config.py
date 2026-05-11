@@ -37,6 +37,23 @@ VERIFY_TIMEOUT = 120
 # or batch size. For development or testing, modify these constants directly.
 DAEMON_INTERVAL = 1800
 
+# Issue fetching runs independently of toolchain updates.
+ISSUE_POLL_INTERVAL = 120   # 2 minutes between issue-list fetches
+TOOLCHAIN_INTERVAL = 7200   # 2 hours between LLVM rebuilds
+
+# Shutdown flag — set by signal handlers, checked by all blocking loops.
+_shutdown_requested = False
+
+
+def request_shutdown():
+    global _shutdown_requested
+    _shutdown_requested = True
+
+
+def check_shutdown():
+    if _shutdown_requested:
+        raise SystemExit(0)
+
 ISSUES_PER_ROUND = 20
 
 # Labels whose prefix matches any entry in this set are skipped.

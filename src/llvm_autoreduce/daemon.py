@@ -13,6 +13,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 from logging.handlers import TimedRotatingFileHandler
 
@@ -39,14 +40,13 @@ def setup_logging():
     root.addHandler(console)
 
 
-_shutdown_requested = False
-
 
 def _handle_shutdown(signum, _frame):
-    global _shutdown_requested
     sig_name = signal.Signals(signum).name
-    log.info("received %s, shutting down after current round", sig_name)
-    _shutdown_requested = True
+    log.info("received %s, shutting down", sig_name)
+    config.request_shutdown()
+    # Restore default handler so a second signal kills us immediately.
+    signal.signal(signum, signal.SIG_DFL)
 
 
 def _write_pidfile():
@@ -96,11 +96,15 @@ def _check_toolchain():
     subsequent reduction rounds to fail silently.
     """
     log.info("toolchain health: building")
-    proc = subprocess.run(
-        ["bash", str(tools.UPDATE_SCRIPT), "--skip-git"],
-        cwd=str(config.PROJECT_ROOT),
-        capture_output=True, text=True, encoding="utf-8", timeout=1800,
-    )
+    try:
+        proc = _run_process(
+            ["bash", str(tools.UPDATE_SCRIPT), "--skip-git"],
+            cwd=str(config.PROJECT_ROOT),
+            text=True, encoding="utf-8", timeout=1800,
+        )
+    except subprocess.TimeoutExpired:
+        log.critical("toolchain health check FAILED: build timed out")
+        return False
     if proc.returncode != 0:
         log.critical("toolchain health check FAILED: build exit %d\n%s\n%s",
                      proc.returncode, proc.stdout, proc.stderr)
@@ -211,12 +215,16 @@ def is_processed(issue_id):
 
 
 def _run_process(cmd, **kwargs):
-    """Run subprocess with 8GB RLIMIT_AS propagated to child via pre-fork inheritance.
+    """Run subprocess with 8GB RLIMIT_AS and shutdown-aware polling.
 
     Sets the address-space limit before forking so the child inherits it, then
     restores the parent limit immediately after fork(). This replaces preexec_fn
     (deprecated in Python 3.11+). The daemon is single-threaded so the brief
     parent-side limit change is harmless.
+
+    Output is captured via daemon threads to avoid pipe-buffer deadlock while
+    the main thread polls for shutdown every second. config.check_shutdown()
+    raises SystemExit if a signal was received.
 
     ACCEPTED RISK (R14): RLIMIT_AS is temporarily set on the parent process
     between setrlimit() and fork(). If the daemon's RSS has grown above the 8 GB
@@ -228,8 +236,9 @@ def _run_process(cmd, **kwargs):
     would avoid the parent-side side-effect but is deprecated in Python 3.11+.
     """
     timeout = kwargs.pop("timeout", None)
-    if kwargs.get("text") and "encoding" not in kwargs:
-        kwargs["encoding"] = "utf-8"
+    text = kwargs.pop("text", False)
+    encoding = kwargs.pop("encoding", "utf-8")
+
     old = resource.getrlimit(resource.RLIMIT_AS)
     limit = 8 * 1024 ** 3
     try:
@@ -237,17 +246,58 @@ def _run_process(cmd, **kwargs):
     except (ValueError, OSError):
         old = None
     try:
-        proc = subprocess.Popen(cmd, **kwargs)
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kwargs,
+        )
     finally:
         if old is not None:
             with contextlib.suppress(ValueError, OSError):
                 resource.setrlimit(resource.RLIMIT_AS, old)
+
+    out_chunks = []
+    err_chunks = []
+
+    def _read(pipe, buf):
+        try:
+            for chunk in iter(lambda: pipe.read(65536), b""):
+                buf.append(chunk)
+        finally:
+            pipe.close()
+
+    tout = threading.Thread(target=_read, args=(proc.stdout, out_chunks), daemon=True)
+    terr = threading.Thread(target=_read, args=(proc.stderr, err_chunks), daemon=True)
+    tout.start()
+    terr.start()
+
+    deadline = time.time() + timeout if timeout else float("inf")
     try:
-        out, err = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.communicate()
+        while tout.is_alive() or terr.is_alive():
+            config.check_shutdown()
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                proc.kill()
+                tout.join(timeout=1)
+                terr.join(timeout=1)
+                raise subprocess.TimeoutExpired(cmd, timeout)
+            tout.join(timeout=min(remaining, 1))
+            terr.join(timeout=min(remaining, 1))
+    except SystemExit:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+        tout.join(timeout=1)
+        terr.join(timeout=1)
         raise
+
+    proc.wait()
+    out = b"".join(out_chunks)
+    err = b"".join(err_chunks)
+    if text:
+        out = out.decode(encoding)
+        err = err.decode(encoding)
     return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
 
@@ -1149,7 +1199,7 @@ def reprocess_issue(issue):
         workdir=wd,
         prompt=review_prompt,
         timeout=config.REVIEW_TIMEOUT,
-        shutdown_check=lambda: _shutdown_requested,
+        shutdown_check=lambda: config._shutdown_requested,
     )
     if not ok:
         log.warning("issue=%d review agent failed", issue_id)
@@ -1238,7 +1288,7 @@ def reprocess_issue(issue):
         workdir=wd,
         prompt=extract_prompt,
         timeout=config.EXTRACT_TIMEOUT,
-        shutdown_check=lambda: _shutdown_requested,
+        shutdown_check=lambda: config._shutdown_requested,
     )
     if not ok:
         log.warning("issue=%d extractor agent failed", issue_id)
@@ -1309,7 +1359,7 @@ def reprocess_issue(issue):
         workdir=wd,
         prompt=reduce_prompt,
         timeout=config.REDUCE_TIMEOUT,
-        shutdown_check=lambda: _shutdown_requested,
+        shutdown_check=lambda: config._shutdown_requested,
     )
     if not ok:
         # If the reducer timed out but wrote a result.json (checkpoint
@@ -1475,98 +1525,79 @@ def main():
     # shutdown request. Log rotation tools that send SIGHUP will cause the
     # daemon to exit instead of reloading configuration.
     signal.signal(signal.SIGHUP, _handle_shutdown)
-    # Shutdown is checked at round boundaries, after every issue (1-issue
-    # granularity), and during every opencode agent invocation (1-second
-    # polling via shutdown_check in opencode.run). A SIGTERM/SIGINT received
-    # mid-issue terminates the current agent subprocess within 1 second,
-    # and the for-loop breaks immediately after the current issue completes.
+    # Shutdown is checked via config.check_shutdown() in every blocking
+    # subprocess call and polling loop. A SIGTERM/SIGINT raises SystemExit
+    # which propagates through except Exception handlers and stops the daemon
+    # cleanly with atexit cleanup (pidfile removal).
 
     log.info("llvm-autoreduce daemon starting")
 
-    while not _shutdown_requested:
-        try:
+    last_toolchain_update = 0.0
+    next_issue_poll = 0.0
+    TOOLCHAIN_INTERVAL = config.TOOLCHAIN_INTERVAL
+    ISSUE_POLL_INTERVAL = config.ISSUE_POLL_INTERVAL
+
+    while True:
+        config.check_shutdown()
+        now = time.time()
+
+        # Toolchain update — independent of issue polling.
+        if now - last_toolchain_update >= TOOLCHAIN_INTERVAL:
             log.info("round start")
-            tools.update_all()
-            # ACCEPTED RISK (F47): Toolchain health check runs once per round
-            # before issue processing. If the build succeeded (exit 0) but
-            # produced a broken toolchain (stale shared libs, corrupt binaries),
-            # this check catches it before all 20 issues are silently lost.
-            # A failed health check aborts the round — the daemon stays alive
-            # per F34/F45 so the operator can intervene. This is the FINAL
-            # decision: the health check is the last line of defense against
-            # systemic data loss from a silently-broken toolchain.
-            # ACCEPTED RISK (F56): No agent health check — unlike the toolchain
-            # (checked per-round via _check_toolchain), the opencode binary and
-            # AI provider are only validated at daemon startup. A persistent
-            # opencode or AI provider outage causes every issue in every round
-            # to permanently fail as "agent_failed" → mark_processed, silently
-            # burning through all open issues over multiple rounds. The daemon
-            # has no consecutive-failure counter or circuit breaker for agent
-            # errors. Operator log monitoring is the sole mitigation.
-            if not _check_toolchain():
-                log.critical("toolchain health check failed after update, aborting round")
-                if _shutdown_requested:
-                    break
-                deadline = time.time() + config.DAEMON_INTERVAL
-                while time.time() < deadline and not _shutdown_requested:
+            try:
+                tools.update_all()
+                last_toolchain_update = time.time()
+            except tools.BuildError:
+                log.exception("toolchain build error, will retry next cycle")
+                _check_toolchain()
+            except subprocess.TimeoutExpired:
+                log.exception("toolchain build timeout, will retry next cycle")
+                _check_toolchain()
+            config.check_shutdown()
+            if _check_toolchain():
+                _cleanup_old_workdirs()
+                log.info("toolchain update ok")
+            else:
+                log.critical("toolchain health check failed after update")
+                # Back off briefly before the next cycle.
+                deadline = time.time() + 60
+                while time.time() < deadline:
+                    config.check_shutdown()
                     time.sleep(1)
                 continue
-            _cleanup_old_workdirs()
-            issues = github.fetch_issues()
-            log.info("round fetched %d issues", len(issues))
-            for issue in issues:
-                if _shutdown_requested:
-                    log.info("shutdown requested mid-round, stopping")
-                    break
-                try:
-                    reprocess_issue(issue)
-                except Exception:
-                    # ACCEPTED RISK (F35): Outer per-issue exceptions are terminal —
-                    # mark_processed and never retry. This is the FINAL design decision.
-                    # Every exception path that escapes reprocess_issue (e.g. bug in the
-                    # daemon itself triggered by a specific issue's data) permanently
-                    # skips that issue. The alternative of retrying indefinitely (as was
-                    # done before F35) wastes resources on fundamentally unprocessable
-                    # issues with no hope of eventual success. Breaking buggy issues are
-                    # extremely rare and the cost of occasionally losing one is negligible
-                    # compared to infinite retry loops.
-                    issue_id = issue.get("number", "?")
-                    log.exception("issue=%s unhandled error, permanently skipping", issue_id)
-                    mark_dropped(issue_id, "unhandled_exception")
-                    mark_processed(issue_id)
-            log.info("round done")
-        # ACCEPTED RISK (F34): Non-rollback BuildError (exit code != 0, 2) means
-        # the known-good toolchain also fails to build. The daemon continues running
-        # but all issues in this and subsequent rounds will fail silently because
-        # the toolchain is unusable. A full daemon exit would be more appropriate
-        # but would require external supervision (systemd restart) to recover if
-        # the build failure is transient (e.g. OOM). The current behavior of
-        # logging and continuing is accepted — the operator must monitor logs.
-        # ACCEPTED RISK (F45): _check_toolchain return value is not used
-        # here — the daemon continues the poll loop regardless of whether
-        # the health check passes or fails. A permanently corrupted
-        # toolchain (e.g. stale broken shared library, accidentally
-        # deleted binary) will be detected and logged critically by
-        # _check_toolchain, but the daemon stays alive so the operator
-        # can notice the log and intervene. Exiting the process would
-        # require external supervision (systemd) to restart, which is a
-        # deployment concern outside this daemon's scope.
-        except tools.BuildError:
-            log.exception("round failed: toolchain build error")
-            _check_toolchain()
-        except subprocess.TimeoutExpired:
-            log.exception("round failed: toolchain build timeout")
-            _check_toolchain()
-        except Exception:
-            log.exception("round failed")
-        if _shutdown_requested:
-            break
-        # Sleep in 1-second increments so that SIGTERM/SIGINT are checked
-        # promptly, rather than blocking for the full DAEMON_INTERVAL.
-        deadline = time.time() + config.DAEMON_INTERVAL
-        while time.time() < deadline and not _shutdown_requested:
-            time.sleep(1)
 
+        # Issue polling — independent of toolchain updates.
+        if time.time() >= next_issue_poll:
+            try:
+                issues = github.fetch_issues()
+                log.info("fetched %d issues", len(issues))
+                for issue in issues:
+                    config.check_shutdown()
+                    try:
+                        reprocess_issue(issue)
+                    except Exception:
+                        # ACCEPTED RISK (F35): Outer per-issue exceptions are terminal —
+                        # mark_processed and never retry. This is the FINAL design decision.
+                        # Every exception path that escapes reprocess_issue (e.g. bug in the
+                        # daemon itself triggered by a specific issue's data) permanently
+                        # skips that issue. The alternative of retrying indefinitely (as was
+                        # done before F35) wastes resources on fundamentally unprocessable
+                        # issues with no hope of eventual success. Breaking buggy issues are
+                        # extremely rare and the cost of occasionally losing one is negligible
+                        # compared to infinite retry loops.
+                        issue_id = issue.get("number", "?")
+                        log.exception("issue=%s unhandled error, permanently skipping", issue_id)
+                        mark_dropped(issue_id, "unhandled_exception")
+                        mark_processed(issue_id)
+                log.info("round done")
+            except Exception:
+                log.exception("round failed")
+            next_issue_poll = time.time() + ISSUE_POLL_INTERVAL
+
+        config.check_shutdown()
+        time.sleep(1)
+
+    # Not reachable — SystemExit propagates out of main().
     log.info("daemon shutting down")
 
 

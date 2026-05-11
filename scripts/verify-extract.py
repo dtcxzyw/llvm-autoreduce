@@ -29,6 +29,12 @@ def main():
     oracle = meta.get("oracle", "")
     print(f"extract.json: type={bug_type} oracle={oracle}")
 
+    # Unrelated issues (e.g. runtime library bugs, documentation) — not an LLVM
+    # compiler bug. The daemon handles these before verify_extract is called.
+    if bug_type == "unrelated":
+        print("PASS: unrelated (not an LLVM compiler bug)")
+        sys.exit(0)
+
     # Check main() params for backend miscompilation
     if bug_type == "miscompilation" and oracle == "llc":
         reproducer = meta.get("reproducer_file", "")
