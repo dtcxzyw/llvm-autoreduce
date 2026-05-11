@@ -648,7 +648,7 @@ def verify_alive2(result, workdir_path):
 def verify_lli(result, workdir_path, pattern=""):
     safe_ir = _safe_relative(workdir_path, result["ir_file"])
     if not _check_target_triple_x86(result["ir_file"], workdir_path):
-        log.error("lli verify: reproducer missing x86_64 target triple")
+        log.error("lli verify: reproducer must have target triple starting with x86_64")
         return False
     args = result.get("args", "")
     # lli_args and llubi_args are produced by the reducer agent (trusted oracle).
@@ -865,7 +865,7 @@ def verify_extract(meta, workdir_path):
                 log.warning("verify_extract: backend miscomp reproducer main() has params")
                 return False
             if not _check_target_triple_x86(reproducer, workdir_path):
-                log.warning("verify_extract: backend miscomp reproducer missing x86_64 target triple")
+                log.warning("verify_extract: backend miscomp reproducer must have target triple starting with x86_64")
                 return False
         result = {
             "ir_file": meta["reproducer_file"],
