@@ -27,7 +27,7 @@ TARGET_REPO = "dtcxzyw/llvm-autoreduce"
 REVIEW_TIMEOUT = 300
 # Extractor needs more time — it compiles C sources and runs toolchain
 # commands to reproduce the bug before classification.
-EXTRACT_TIMEOUT = 900
+EXTRACT_TIMEOUT = 1200
 # 30-minute timeout for reduction: bisect via opt-bisect-limit + llvm-reduce.
 # Margin for API latency, LLM reasoning, and large O2 pass pipelines.
 REDUCE_TIMEOUT = 1800
