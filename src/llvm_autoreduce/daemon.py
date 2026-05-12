@@ -840,7 +840,7 @@ def _verify_ir_valid(ir_file, workdir_path):
     safe_ir = _safe_relative(workdir_path, ir_file)
     try:
         p = _run_process(
-            [opt_path, "-passes=verify", safe_ir],
+            [opt_path, "-passes=verify", "-disable-output", safe_ir],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
         )
