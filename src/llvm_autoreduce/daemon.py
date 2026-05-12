@@ -426,6 +426,8 @@ def verify_crash(result, workdir_path, pattern):
         return False
     tool_path = str(config.LLVM_BIN / tool_name)
     safe_ir = _safe_relative(workdir_path, result["ir_file"])
+    if not _verify_ir_valid(result["ir_file"], workdir_path):
+        return False
     # result.json args comes from the reducer agent, which is a trusted
     # oracle. The args string is split with shlex and passed to
     # subprocess.run as a list (no shell involved). Argument injection
@@ -472,6 +474,8 @@ def verify_crash(result, workdir_path, pattern):
 # crash-confused reductions produced by the skill's scripts.
 def verify_llubi(result, workdir_path, pattern=""):
     safe_ir = _safe_relative(workdir_path, result["ir_file"])
+    if not _verify_ir_valid(result["ir_file"], workdir_path):
+        return False
     args = result.get("args", "")
     # llubi_args is produced by the reducer agent (trusted oracle).
     llubi_args = result.get("llubi_args", "--reduce-mode --max-steps 1000000")
@@ -573,6 +577,8 @@ _ALIVE2_APPROXIMATION_MARKER = "Alive2 approximated the semantics of the program
 
 def verify_alive2(result, workdir_path):
     safe_ir = _safe_relative(workdir_path, result["ir_file"])
+    if not _verify_ir_valid(result["ir_file"], workdir_path):
+        return False
     args = result.get("args", "")
     # alive2_args is produced by the reducer agent (trusted oracle).
     alive2_args = result.get("alive2_args", "--smt-to=10000")
@@ -647,6 +653,8 @@ def verify_alive2(result, workdir_path):
 # consistent output for correct backends.
 def verify_lli(result, workdir_path, pattern=""):
     safe_ir = _safe_relative(workdir_path, result["ir_file"])
+    if not _verify_ir_valid(result["ir_file"], workdir_path):
+        return False
     if not _check_target_triple_x86(result["ir_file"], workdir_path):
         log.error("lli verify: reproducer must have target triple starting with x86_64")
         return False
@@ -824,6 +832,28 @@ def _check_target_triple_x86(reproducer_file, workdir_path):
     except (ValueError, OSError):
         return False
     return bool(_TARGET_TRIPLE_X86_RE.search(content))
+
+
+def _verify_ir_valid(ir_file, workdir_path):
+    """Run opt -passes=verify to confirm the IR is valid before verification."""
+    opt_path = str(config.LLVM_BIN / "opt")
+    safe_ir = _safe_relative(workdir_path, ir_file)
+    try:
+        p = _run_process(
+            [opt_path, "-passes=verify", safe_ir],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
+        )
+        if p.returncode != 0:
+            log.error("ir verify failed: %s", p.stderr[:200])
+            return False
+        return True
+    except subprocess.TimeoutExpired:
+        log.error("ir verify timed out")
+        return False
+    except OSError:
+        log.exception("ir verify os error")
+        return False
 
 
 def verify_extract(meta, workdir_path):
