@@ -45,6 +45,8 @@ Read `issue.md` for the bug report context. Inspect ALL files in the working dir
 
 **File type identification:** Files have no extensions — you MUST identify each file's actual type by reading its first 5-10 non-empty lines. LLVM IR files start with `; ModuleID`, `target triple`, `define`, `declare`, or `source_filename`. C/C++ files contain `#include`, `int main`, function signatures, etc. Do NOT use `file` — it cannot distinguish C from C++. When compiling C/C++ sources, use `clang -x c` or `clang -x c++` explicitly.
 
+**Target triple preservation:** Preserve the original LLVM IR's target triple for crash and mid-end miscompilation bugs. opt, llc, and llubi_legacy work correctly with any target triple — changing it unnecessarily may mask the bug. The ONLY exception is backend miscompilation (lli verification): lli JITs for the host architecture (x86_64), so the reproducer MUST have `target triple = "x86_64..."`. For backend miscompilation, adapt the reproducer to x86_64 as described below.
+
 Your job:
 1. **Reproduce the bug first.** Run the appropriate toolchain binary to reproduce the crash or miscompilation. Wrap toolchain commands with `timeout 60`. Stack traces and crash output quoted in the issue body are REFERENCE HINTS ONLY — the pattern field MUST come from actual toolchain output produced by running the tool in this workdir. This validates the reproducer is functional before downstream stages spend time on it.
  2. **Identify the bug type** — classify as `crash` (opt/llc crash with stack trace or assertion), `miscompilation` (wrong code generation), or `unrelated`.

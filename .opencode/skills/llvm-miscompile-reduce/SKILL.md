@@ -287,7 +287,7 @@ After the checkpoint result.json, try these techniques to shrink `reduced.ll` fu
 
 **Reduce bitwidth:** Replace `i64` with smaller integer types (`i32`, `i16`, `i8`) where possible. Adjust constants accordingly. Test that the miscompilation still reproduces.
 
-**Reduce pointer width:** In the target datalayout, change `p:64:64` to `p:32:32` (or lower). Update `target triple` to match (e.g. use a 32-bit target like `armv7-unknown-linux-gnueabihf`).
+**Reduce pointer width:** In the target datalayout, change `p:64:64` to `p:32:32` (or lower).
 
 **Reduce loop trip count:** If the IR has a loop with a fixed trip count (e.g. `br i1 %cmp, label %loop, label %exit` where %cmp compares induction variable against a constant like 128), reduce the constant (e.g. 128 → 4). This shrinks the loop body that needs to be preserved.
 
