@@ -1031,7 +1031,7 @@ def _download_attachments(body, wd):
             log.exception("attachment download failed: %s", filename)
 
 
-def _generate_report(meta, result, workdir_path, issue_id):
+def _generate_report(meta, result, workdir_path, issue_id, timing=None):
     """Generate reduction report mechanically from verified data.
 
     Replaces the AI agent-generated report.md with deterministic output
@@ -1079,6 +1079,17 @@ def _generate_report(meta, result, workdir_path, issue_id):
         else:
             lines.append(f"- **{name}:** (unknown)")
     lines.append("")
+
+    lines.append("")
+    if timing:
+        lines.append("## Timing")
+        lines.append("")
+        lines.append(f"**Total:** {int(timing['total'])}s")
+        for label in ("security-reviewer", "extractor", "reducer"):
+            key = label.replace("-", "_")
+            if key in timing:
+                lines.append(f"- **{label}:** {int(timing[key])}s")
+        lines.append("")
 
     lines.append("")
     lines.append("## Reduced IR")
@@ -1158,6 +1169,7 @@ def _generate_report(meta, result, workdir_path, issue_id):
 
 
 def reprocess_issue(issue):
+    t_start = time.time()
     issue_id = issue["number"]
     if is_processed(issue_id):
         return
@@ -1258,6 +1270,7 @@ def reprocess_issue(issue):
     #        the agent's execution log. If opencode's config handling changes,
     #        the reviewer silently gains full bash access on untrusted content.
     review_prompt = "Review all reproducer files in this directory for malicious content and patterns. Write your verdict to review.json."
+    t0 = time.time()
     ok = opencode.run(
         agent="security-reviewer",
         workdir=wd,
@@ -1265,6 +1278,7 @@ def reprocess_issue(issue):
         timeout=config.REVIEW_TIMEOUT,
         shutdown_check=lambda: config._shutdown_requested,
     )
+    t_review = time.time() - t0
     if not ok:
         log.warning("issue=%d review agent failed", issue_id)
         mark_dropped(issue_id, "review_agent_failed")
@@ -1347,6 +1361,7 @@ def reprocess_issue(issue):
         '"args": "<opt/llc arguments>", "oracle": "opt|llc", '
         '"pattern": "<crash substring, or wrong_output|nonzero_exit|infinite_loop>"}'
     )
+    t0 = time.time()
     ok = opencode.run(
         agent="extractor",
         workdir=wd,
@@ -1354,6 +1369,7 @@ def reprocess_issue(issue):
         timeout=config.EXTRACT_TIMEOUT,
         shutdown_check=lambda: config._shutdown_requested,
     )
+    t_extract = time.time() - t0
     if not ok:
         log.warning("issue=%d extractor agent failed", issue_id)
         mark_dropped(issue_id, "extractor_agent_failed")
@@ -1418,6 +1434,7 @@ def reprocess_issue(issue):
     #        bugs requiring multiple .ll files) are not supported and will
     #        silently fail reduction.
     reduce_prompt = "Read extract.json to determine the bug type. Load the appropriate skill (llvm-crash-reduce or llvm-miscompile-reduce) and reduce the reproducer. Write result.json. After writing result.json, self-validate: verify-result"
+    t0 = time.time()
     ok = opencode.run(
         agent="reducer",
         workdir=wd,
@@ -1425,6 +1442,7 @@ def reprocess_issue(issue):
         timeout=config.REDUCE_TIMEOUT,
         shutdown_check=lambda: config._shutdown_requested,
     )
+    t_reduce = time.time() - t0
     if not ok:
         # If the reducer timed out but wrote a result.json (checkpoint
         # from the skill's step 7), treat the reduction as successful.
@@ -1500,7 +1518,13 @@ def reprocess_issue(issue):
     # unprocessable issue. This path is consistent with every other failure path
     # in reprocess_issue.
     try:
-        report = _generate_report(meta, result, wd, issue_id)
+        timing = {
+            "total": time.time() - t_start,
+            "security_reviewer": t_review,
+            "extractor": t_extract,
+            "reducer": t_reduce,
+        }
+        report = _generate_report(meta, result, wd, issue_id, timing=timing)
     except Exception:
         log.exception("issue=%d report generation failed", issue_id)
         mark_dropped(issue_id, "report_generation_failed")
