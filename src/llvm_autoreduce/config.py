@@ -89,7 +89,7 @@ SKIP_LABEL_PREFIXES = frozenset(
         "hlsl",
         "mlir",
         "flang",
-        "lld:",
+
         "lldb",
         "libc++",
         "polly",
@@ -98,6 +98,11 @@ SKIP_LABEL_PREFIXES = frozenset(
         "mc",
         "pgo",
         "tools:",
+        # Non-bug / feature request labels
+        "concepts",
+        "bugzilla",
+        "libc",
+        "packaging",
         # Other excluded categories
         "undefined behavior",
         "llvm-reduce",
