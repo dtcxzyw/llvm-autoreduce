@@ -414,6 +414,15 @@ def _validate_result(result):
     else:
         raise ValueError(f"result.json has unknown type: {result_type!r}")
 
+    # Reject bisect artifacts and default pipelines in args.
+    # After bisect, args must be reduced to a single pass or a few specific
+    # passes — never -opt-bisect-limit or a default<O?> pipeline.
+    _args = result.get("args", "")
+    if "-opt-bisect-limit" in _args:
+        raise ValueError(f"result.json args must not contain -opt-bisect-limit: {_args!r}")
+    if "default<" in _args:
+        raise ValueError(f"result.json args must not contain default pipeline: {_args!r}")
+
 
 def verify_crash(result, workdir_path, pattern):
     # Resolve the tool binary from the built LLVM toolchain (never PATH).
