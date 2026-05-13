@@ -103,7 +103,7 @@ Run the single pass (opt) or llc on `reduced.ll`, confirm crash signature still 
   "ir_file": "reduced.ll"
 }
 ```
-The `args` for opt MUST be the single pass (e.g. `-passes=licm`), not a full pipeline containing `default<`. Never include `-opt-bisect-limit` in args — bisect is for finding the pass only; llvm-reduce uses the single pass found by bisect.
+The `args` for opt MUST be the single pass (e.g. `-passes=licm`), not a full pipeline containing `default<`. Auxiliary flags that help reproduce the bug (e.g. `-slp-threshold=-99999`, `-verify-scev`) may be included alongside the pass when relevant. Never include `-opt-bisect-limit` in args — bisect is for finding the pass only; llvm-reduce uses the single pass found by bisect.
 
 **result.json for llc crash:**
 ```json
