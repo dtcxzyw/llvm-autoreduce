@@ -485,6 +485,9 @@ def verify_llubi(result, workdir_path, pattern=""):
     safe_ir = _safe_relative(workdir_path, result["ir_file"])
     if not _verify_ir_valid(result["ir_file"], workdir_path):
         return False
+    if not _check_no_undef(result["ir_file"], workdir_path):
+        log.error("llubi verify: IR contains undef")
+        return False
     args = result.get("args", "")
     # llubi_args is produced by the reducer agent (trusted oracle).
     llubi_args = result.get("llubi_args", "--reduce-mode --max-steps 1000000")
@@ -588,6 +591,9 @@ def verify_alive2(result, workdir_path):
     safe_ir = _safe_relative(workdir_path, result["ir_file"])
     if not _verify_ir_valid(result["ir_file"], workdir_path):
         return False
+    if not _check_no_undef(result["ir_file"], workdir_path):
+        log.error("alive2 verify: IR contains undef")
+        return False
     args = result.get("args", "")
     # alive2_args is produced by the reducer agent (trusted oracle).
     alive2_args = result.get("alive2_args", "--smt-to=10000")
@@ -663,6 +669,9 @@ def verify_alive2(result, workdir_path):
 def verify_lli(result, workdir_path, pattern=""):
     safe_ir = _safe_relative(workdir_path, result["ir_file"])
     if not _verify_ir_valid(result["ir_file"], workdir_path):
+        return False
+    if not _check_no_undef(result["ir_file"], workdir_path):
+        log.error("lli verify: IR contains undef")
         return False
     if not _check_target_triple_x86(result["ir_file"], workdir_path):
         log.error("lli verify: reproducer must have target triple starting with x86_64")
@@ -805,6 +814,10 @@ def verify_extract_consistency(meta, result, workdir_path):
 _MAIN_NO_PARAMS_RE = re.compile(r"define\s+\S+\s+@main\s*\(\s*\)")
 _TARGET_TRIPLE_X86_RE = re.compile(r'target\s+triple\s*=\s*"x86_64')
 
+# Matches 'undef' as a standalone value in LLVM IR, preceded by whitespace
+# and followed by a word boundary (comma, newline, space, etc.).
+_UNDEF_RE = re.compile(r"\sundef\b")
+
 
 def _check_main_no_params(reproducer_file, workdir_path):
     """Verify that main() has no parameters (required for backend miscompilation).
@@ -841,6 +854,22 @@ def _check_target_triple_x86(reproducer_file, workdir_path):
     except (ValueError, OSError):
         return False
     return bool(_TARGET_TRIPLE_X86_RE.search(content))
+
+
+def _check_no_undef(ir_file, workdir_path):
+    """Verify the IR file does not contain undef values.
+
+    undef can non-deterministically mask miscompilations — alive2
+    handles it differently, and llubi/lli may produce inconsistent
+    results. The reducer agent is instructed to replace undef with
+    zero/null/poison.
+    """
+    safe_ir = _safe_relative(workdir_path, ir_file)
+    try:
+        content = workdir.read(safe_ir)
+    except (ValueError, OSError):
+        return False
+    return not bool(_UNDEF_RE.search(content))
 
 
 def _verify_ir_valid(ir_file, workdir_path):
@@ -896,10 +925,13 @@ def verify_extract(meta, workdir_path):
         return verify_crash(result, workdir_path, pattern)
 
     if bug_type == "miscompilation":
+        reproducer = meta["reproducer_file"]
+        if not _check_no_undef(reproducer, workdir_path):
+            log.warning("verify_extract: miscomp reproducer contains undef")
+            return False
         # Backend miscompilation requires main() with no parameters —
         # llubi_legacy and lli disagree on argc/argv.
         if oracle == "llc":
-            reproducer = meta["reproducer_file"]
             if not _check_main_no_params(reproducer, workdir_path):
                 log.warning("verify_extract: backend miscomp reproducer main() has params")
                 return False

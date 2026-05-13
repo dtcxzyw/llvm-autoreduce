@@ -112,11 +112,14 @@ opt -opt-bisect-limit=M-1 -passes='<args>' repro.ll -S > before.ll
 
 **CRITICAL: The interestingness script MUST match the pattern from extract.json.** Choose the template for the pattern type. Preserving the exact pattern type ensures the reduced IR manifests the same kind of miscompilation — wrong_output stays wrong_output, nonzero_exit stays nonzero_exit, infinite_loop stays infinite_loop.
 
+**All miscompilation interestingness scripts MUST also reject IR containing `undef`** — undef masks genuine miscompilations. Add `if grep -q " undef" "$1"; then exit 1; fi` as the first check in every template below.
+
 **llubi oracle (middle-end) — pattern=wrong_output:**
 ```bash
 cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
 set -eo pipefail
+if grep -q " undef" "$1"; then exit 1; fi
 timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt
 timeout 30 opt -passes='<pass_name>' "$1" -S > _opt.ll
 timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 _opt.ll > _out.txt
@@ -129,6 +132,7 @@ SCRIPT
 cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
 set -o pipefail
+if grep -q " undef" "$1"; then exit 1; fi
 timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt || exit 1
 timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 -
 ret=$?
@@ -142,6 +146,7 @@ SCRIPT
 cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
 set -o pipefail
+if grep -q " undef" "$1"; then exit 1; fi
 timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt || exit 1
 timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 -
 ret=$?
@@ -155,6 +160,7 @@ SCRIPT
 cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
 set -eo pipefail
+if grep -q " undef" "$1"; then exit 1; fi
 # Reject IR where main() has parameters — llubi_legacy and lli disagree on argc/argv
 grep -qP 'define\s+\S+\s+@main\s*\(\s*\)' "$1" || exit 1
 timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt
@@ -168,6 +174,7 @@ SCRIPT
 cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
 set -o pipefail
+if grep -q " undef" "$1"; then exit 1; fi
 # Reject IR where main() has parameters — llubi_legacy and lli disagree on argc/argv
 grep -qP 'define\s+\S+\s+@main\s*\(\s*\)' "$1" || exit 1
 timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt || exit 1
@@ -183,6 +190,7 @@ SCRIPT
 cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
 set -o pipefail
+if grep -q " undef" "$1"; then exit 1; fi
 # Reject IR where main() has parameters — llubi_legacy and lli disagree on argc/argv
 grep -qP 'define\s+\S+\s+@main\s*\(\s*\)' "$1" || exit 1
 timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt || exit 1
@@ -198,6 +206,7 @@ SCRIPT
 cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
 set -o pipefail
+if grep -q " undef" "$1"; then exit 1; fi
 timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt || exit 1
 timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 lli -
 ret=$?
@@ -211,6 +220,7 @@ SCRIPT
 cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
 set -o pipefail
+if grep -q " undef" "$1"; then exit 1; fi
 timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt || exit 1
 timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 lli -
 ret=$?
@@ -297,7 +307,7 @@ alive-tv --disable-undef-input --smt-to=10000 -src-unroll=4 -tgt-unroll=4 <src> 
 ```
 This unrolls loops in both source and target up to N iterations.
 
-**NEVER use undef.** Do not introduce `undef` or `poison` values — alive2 handles them differently and they can mask real bugs. Use concrete values instead.
+**NEVER use undef.** The reduced IR MUST NOT contain `undef` values — they cause non-deterministic behavior and can mask real miscompilations across all oracles (llubi, alive2, lli). If the original reproducer contains `undef`, replace it with `zeroinitializer` (for aggregates), `null` (for pointers), or explicit constant values (e.g. `i32 0`). The interestingness script and verification step will reject IR that still contains `undef`.
 
 **Strip fast math flags.** If the IR contains `fast` or other fast-math flags on floating-point instructions, decompose `fast` into its constituent flags and keep only `nnan` and `ninf` — rewrite `fast` as `nnan ninf` explicitly. For any other fast-math flags (`nsz`, `arcp`, `contract`, `afn`, `reassoc`), remove them. If the miscompilation is specifically related to `nsz` (no-signed-zeros), prefer to drop `nsz` entirely rather than preserve it.
 
