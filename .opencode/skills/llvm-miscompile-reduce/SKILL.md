@@ -315,7 +315,7 @@ This unrolls loops in both source and target up to N iterations.
 
 Verify the reduced IR still reproduces the miscompilation with the single pass. Write the final `result.json` (update from checkpoint if alive2 upgrade or manual reduction succeeded).
 
-**args field requirements:** After bisect isolates the bug to a single pass (or a few specific passes), `args` MUST include that pass (e.g. `-passes=gvn`). Auxiliary flags that help reproduce the bug (e.g. `-slp-threshold=-99999`) may be included alongside the pass when relevant. The `args` field MUST NOT contain `-opt-bisect-limit` (bisect is a diagnostic step, NOT stored in result.json) and MUST NOT contain `default<` (the full O1/O2/O3 pipeline — bisect already narrowed it to the specific problematic pass).
+**args field requirements:** After bisect isolates the bug to a single pass (or a few specific passes), `args` MUST include that pass (e.g. `-passes=gvn`). Auxiliary flags that help reproduce the bug (e.g. `-slp-threshold=-99999`) may be included alongside the pass when relevant. The `args` field MUST NOT contain `-opt-bisect-limit` (bisect is a diagnostic step, NOT stored in result.json) and MUST NOT contain `default<` (the full O1/O2/O3 pipeline — bisect already narrowed it to the specific problematic pass). **Backend/codegen passes MUST use legacy PM:** when invoking backend passes like codegenprepare with `opt`, use `-codegenprepare` (legacy syntax), never `-passes=codegenprepare` (the new pass manager does not register codegen passes).
 
 **result.json (alive2):**
 ```json

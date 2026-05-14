@@ -422,6 +422,14 @@ def _validate_result(result):
         raise ValueError(f"result.json args must not contain -opt-bisect-limit: {_args!r}")
     if "default<" in _args:
         raise ValueError(f"result.json args must not contain default pipeline: {_args!r}")
+    # Backend/codegen passes must use legacy PM (-codegenprepare), not
+    # new PM (-passes=codegenprepare). The new PM does not register
+    # codegen passes — opt -passes=codegenprepare fails with "unknown
+    # pass name".
+    if _BACKEND_PASS_IN_NEW_PM_RE.search(_args):
+        raise ValueError(
+            f"result.json args must use legacy PM for backend passes, not -passes=: {_args!r}"
+        )
 
 
 def verify_crash(result, workdir_path, pattern):
@@ -817,6 +825,11 @@ _TARGET_TRIPLE_X86_RE = re.compile(r'target\s+triple\s*=\s*"x86_64')
 # Matches 'undef' as a standalone value in LLVM IR, preceded by whitespace
 # and followed by a word boundary (comma, newline, space, etc.).
 _UNDEF_RE = re.compile(r"\sundef\b")
+
+# Matches backend/codegen pass names inside a new-PM -passes= argument.
+# Backend passes (codegenprepare, etc.) only exist in the legacy pass
+# manager — they must be used via -<passname>, not -passes=<passname>.
+_BACKEND_PASS_IN_NEW_PM_RE = re.compile(r"-passes=.*\bcodegenprepare\b", re.IGNORECASE)
 
 
 def _check_main_no_params(reproducer_file, workdir_path):
