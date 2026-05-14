@@ -20,6 +20,9 @@ DROPPED = WORK_ROOT / "dropped.txt"
 DAEMON_LOG = WORK_ROOT / "daemon.log"
 
 AUTOREDUCE_TOKEN = os.environ.get("AUTOREDUCE_TOKEN", "")
+# Separate token for labeling llvm/llvm-project issues.
+# Requires write access to the SOURCE_REPO (llvm/llvm-project) to add labels.
+AUTOREDUCE_LLVM_TOKEN = os.environ.get("AUTOREDUCE_LLVM_TOKEN", "")
 GITHUB_API = "https://api.github.com"
 SOURCE_REPO = "llvm/llvm-project"
 TARGET_REPO = "dtcxzyw/llvm-autoreduce"

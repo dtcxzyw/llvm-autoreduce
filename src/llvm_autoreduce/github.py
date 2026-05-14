@@ -6,7 +6,14 @@ import time
 
 import requests
 
-from .config import AUTOREDUCE_TOKEN, GITHUB_API, ISSUES_PER_ROUND, SOURCE_REPO, TARGET_REPO
+from .config import (
+    AUTOREDUCE_LLVM_TOKEN,
+    AUTOREDUCE_TOKEN,
+    GITHUB_API,
+    ISSUES_PER_ROUND,
+    SOURCE_REPO,
+    TARGET_REPO,
+)
 
 log = logging.getLogger(__name__)
 
@@ -134,3 +141,29 @@ def create_issue(title, body):
     # ACCEPTED RISK (F29): Unguarded resp.json()["html_url"] access —
     # assumes the GitHub REST API response schema includes html_url.
     return resp.json()["html_url"]
+
+
+def add_labels_to_issue(issue_number, labels):
+    """Add labels to the original issue in llvm/llvm-project.
+
+    Uses AUTOREDUCE_LLVM_TOKEN (separate token with write access to
+    llvm/llvm-project) rather than the primary AUTOREDUCE_TOKEN.
+    """
+    if not AUTOREDUCE_LLVM_TOKEN:
+        log.warning("label: AUTOREDUCE_LLVM_TOKEN not set, cannot label issue=%d", issue_number)
+        return
+    url = f"{GITHUB_API}/repos/{SOURCE_REPO}/issues/{issue_number}/labels"
+    custom_headers = {
+        "Authorization": f"Bearer {AUTOREDUCE_LLVM_TOKEN}",
+    }
+    try:
+        _request("POST", url, json={"labels": list(labels)}, headers=custom_headers)
+        log.info("issue=%d labeled: %s", issue_number, labels)
+    except Exception:
+        # ACCEPTED RISK (label failure): Label addition is best-effort.
+        # If the LLVM token is expired, has insufficient scope, or the
+        # API call fails, the issue is still fully processed — the
+        # reduction result was already submitted and mark_processed()
+        # was called. Missing a label does not affect the daemon's
+        # correctness or future rounds.
+        log.exception("issue=%d label failed: %s", issue_number, labels)

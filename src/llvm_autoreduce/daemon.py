@@ -1561,6 +1561,19 @@ def reprocess_issue(issue):
         return
     log.info("issue=%d verify pass", issue_id)
 
+    # Step 5.5: add labels to the original llvm/llvm-project issue.
+    # Uses a separate AUTOREDUCE_LLVM_TOKEN to avoid scope confusion
+    # with the primary AUTOREDUCE_TOKEN (which is scoped to the
+    # report-target repo). Best-effort — label failures are logged
+    # but do not block report submission or mark_processed.
+    labels = {"confirmed"}
+    bug_type = meta.get("type", result.get("type", ""))
+    if bug_type == "crash":
+        labels.add("crash-on-valid")
+    elif bug_type == "miscompilation":
+        labels.add("miscompilation")
+    github.add_labels_to_issue(issue_id, labels)
+
     # Step 6: generate report and submit
     # Report is generated mechanically from verified data (meta, result, reduced IR)
     # rather than relying on AI-generated report.md.
