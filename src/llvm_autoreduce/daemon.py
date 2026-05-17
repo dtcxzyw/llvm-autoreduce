@@ -84,6 +84,43 @@ def _check_binary(binary_path, name):
         return False, "failed to run"
 
 
+# Minimal IR program used to verify lli can JIT and execute code.
+# A functional lli must be able to run this without crashing.
+_LLI_MINIMAL_IR = b"define i32 @main() {\nentry:\n  ret i32 0\n}\n"
+
+
+def _check_lli_functional():
+    """Run lli on a minimal IR program to verify JIT execution.
+
+    A binary that passes --version may still crash on actual IR due to
+    ABI mismatches, missing library symbols, or corrupt runtime state.
+    This functional test catches such silent failures.
+
+    Returns (ok: bool, detail: str).
+    """
+    lli_path = config.LLVM_BIN / "lli"
+    import tempfile
+    try:
+        fd, tmp_path = tempfile.mkstemp(suffix=".ll")
+        try:
+            os.write(fd, _LLI_MINIMAL_IR)
+            os.close(fd)
+            result = subprocess.run(
+                [str(lli_path), tmp_path],
+                capture_output=True, timeout=30,
+            )
+            if result.returncode == 0:
+                return True, "ok"
+            stderr = result.stderr.decode("utf-8", errors="replace")[:200]
+            return False, f"exit {result.returncode}: {stderr}"
+        finally:
+            os.unlink(tmp_path)
+    except subprocess.TimeoutExpired:
+        return False, "timeout"
+    except OSError:
+        return False, "failed to run"
+
+
 def _check_toolchain():
     """Build all toolchain components then verify binaries are functional.
 
@@ -116,6 +153,14 @@ def _check_toolchain():
         ok, detail = _check_binary(config.LLVM_BIN / name, name)
         if not ok:
             missing.append(f"{name} ({detail})")
+    # lli functional test: run a minimal IR program through lli to verify
+    # the JIT engine actually works. A binary that passes --version may
+    # still crash on real IR due to ABI mismatches or corrupt runtime.
+    lli_missing = any(m.split(" ")[0] == "lli" for m in missing)
+    if not lli_missing:
+        ok, detail = _check_lli_functional()
+        if not ok:
+            missing.append(f"lli (functional: {detail})")
     # Miscompilation oracles — built alongside LLVM by update-tools.sh.
     # ACCEPTED RISK (F59): Oracle binary failures are treated identically to
     # core LLVM tool failures in the health check. If an oracle binary is
