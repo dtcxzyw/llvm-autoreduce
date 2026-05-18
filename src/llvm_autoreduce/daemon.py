@@ -1617,6 +1617,17 @@ def reprocess_issue(issue):
         labels.add("crash-on-valid")
     elif bug_type == "miscompilation":
         labels.add("miscompilation")
+    # Mid-end pass-specific labels
+    if meta.get("oracle") == "opt":
+        args = (meta.get("args", "") + " " + result.get("args", "")).lower()
+        if "instcombine" in args:
+            labels.add("llvm:instcombine")
+        if "vectorcombine" in args:
+            labels.add("llvm:vectorcombine")
+        if "slp-vectorizer" in args:
+            labels.add("llvm:SLPVectorizer")
+        if "loop-vectorize" in args:
+            labels.add("vectorizers")
     github.add_labels_to_issue(issue_id, labels)
 
     # Step 6: generate report and submit
