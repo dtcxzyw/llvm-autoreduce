@@ -23,9 +23,11 @@ AUTOREDUCE_TOKEN = os.environ.get("AUTOREDUCE_TOKEN", "")
 # Separate token for labeling llvm/llvm-project issues.
 # Requires write access to the SOURCE_REPO (llvm/llvm-project) to add labels.
 AUTOREDUCE_LLVM_TOKEN = os.environ.get("AUTOREDUCE_LLVM_TOKEN", "")
+LLVM_BISECT_TOKEN = os.environ.get("LLVM_BISECT_TOKEN", "")
 GITHUB_API = "https://api.github.com"
 SOURCE_REPO = "llvm/llvm-project"
 TARGET_REPO = "dtcxzyw/llvm-autoreduce"
+BISECT_REPO = "dtcxzyw/llvm-bisect-service"
 
 REVIEW_TIMEOUT = 300
 # Extractor needs more time — it compiles C sources and runs toolchain

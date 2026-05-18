@@ -9,8 +9,10 @@ import requests
 from .config import (
     AUTOREDUCE_LLVM_TOKEN,
     AUTOREDUCE_TOKEN,
+    BISECT_REPO,
     GITHUB_API,
     ISSUES_PER_ROUND,
+    LLVM_BISECT_TOKEN,
     SOURCE_REPO,
     TARGET_REPO,
 )
@@ -167,3 +169,44 @@ def add_labels_to_issue(issue_number, labels):
         # was called. Missing a label does not affect the daemon's
         # correctness or future rounds.
         log.exception("issue=%d label failed: %s", issue_number, labels)
+
+
+def create_bisect_issue(issue_id, oracle, args, pattern, ir_content):
+    """Create a bisect task on dtcxzyw/llvm-bisect-service for crash bugs.
+
+    Uses LLVM_BISECT_TOKEN for authentication. Best-effort — failures are
+    logged but do not affect the main pipeline.
+    """
+    if not LLVM_BISECT_TOKEN:
+        log.warning("bisect: LLVM_BISECT_TOKEN not set, cannot create bisect issue=%d", issue_id)
+        return
+    exec_name = "opt-exec" if oracle == "opt" else "llc-exec"
+    suppress = "--disable-output" if oracle == "opt" else "-o /dev/null"
+    script = (
+        f'./{exec_name} {args} test.ll {suppress} 2>&1 | grep -q "{pattern}"\n'
+        f"if [ $? -eq 0 ]; then\n"
+        f"    exit 1\n"
+        f"fi\n"
+        f"exit 0"
+    )
+    body_parts = [
+        f"```\n{script}\n```",
+        f"```\n{ir_content}\n```",
+        f"https://github.com/{SOURCE_REPO}/issues/{issue_id}",
+    ]
+    body = "\n\n".join(body_parts)
+    title = f"Bisect issue{issue_id}"
+    url = f"{GITHUB_API}/repos/{BISECT_REPO}/issues"
+    custom_headers = {
+        "Authorization": f"Bearer {LLVM_BISECT_TOKEN}",
+    }
+    try:
+        resp = _request(
+            "POST", url,
+            json={"title": title, "body": body, "labels": ["bisect"]},
+            headers=custom_headers,
+        )
+        bisect_url = resp.json()["html_url"]
+        log.info("issue=%d bisect task created: %s", issue_id, bisect_url)
+    except Exception:
+        log.exception("issue=%d bisect issue creation failed", issue_id)

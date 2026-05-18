@@ -1677,6 +1677,20 @@ def reprocess_issue(issue):
         mark_dropped(issue_id, "submission_failed")
         mark_processed(issue_id)
         return
+    if meta["type"] == "crash":
+        try:
+            ir_file = result["ir_file"]
+            ir_path = _safe_relative(wd, ir_file)
+            ir_content = workdir.read(ir_path)
+            github.create_bisect_issue(
+                issue_id,
+                result.get("oracle", "opt"),
+                result.get("args", ""),
+                meta.get("pattern", ""),
+                ir_content,
+            )
+        except Exception:
+            log.exception("issue=%d bisect issue creation failed", issue_id)
     mark_processed(issue_id)
 
 
