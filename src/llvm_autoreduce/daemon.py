@@ -1617,16 +1617,16 @@ def reprocess_issue(issue):
         labels.add("crash-on-valid")
     elif bug_type == "miscompilation":
         labels.add("miscompilation")
-    # Mid-end pass-specific labels
+    # Mid-end pass-specific labels: oracle from extractor, pass from reducer
     if meta.get("oracle") == "opt":
-        args = (meta.get("args", "") + " " + result.get("args", "")).lower()
-        if "instcombine" in args:
+        reducer_args = result.get("args", "").lower()
+        if "instcombine" in reducer_args:
             labels.add("llvm:instcombine")
-        if "vectorcombine" in args:
+        if "vectorcombine" in reducer_args:
             labels.add("llvm:vectorcombine")
-        if "slp-vectorizer" in args:
+        if "slp-vectorizer" in reducer_args:
             labels.add("llvm:SLPVectorizer")
-        if "loop-vectorize" in args:
+        if "loop-vectorize" in reducer_args:
             labels.add("vectorizers")
     github.add_labels_to_issue(issue_id, labels)
 
