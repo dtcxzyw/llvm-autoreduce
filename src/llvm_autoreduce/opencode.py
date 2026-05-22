@@ -74,8 +74,11 @@ def run(agent, workdir, prompt, timeout, shutdown_check=None):
         "--model", "deepseek/deepseek-v4-pro",
         "--agent", agent,
         "--format", "json",
-        prompt,
     ]
+    if agent in ("extractor", "reducer"):
+        cmd.append("--variant")
+        cmd.append("max")
+    cmd.append(prompt)
 
     # Pre-set RLIMIT_AS=8GB before fork so child inherits it; restore parent
     # limit immediately after. Replaces preexec_fn (deprecated in 3.11+).
