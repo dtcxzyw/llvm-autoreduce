@@ -114,12 +114,22 @@ opt -opt-bisect-limit=M-1 -passes='<args>' repro.ll -S > before.ll
 
 **All miscompilation interestingness scripts MUST also reject IR containing `undef`** — undef masks genuine miscompilations. Add `if grep -q " undef" "$1"; then exit 1; fi` as the first check in every template below.
 
+**All interestingness scripts MUST also reject IR with target intrinsics but no target-features** — llvm-reduce will strip the attribute otherwise, breaking oracle commands. Add the following guard after the undef check in every template below:
+```bash
+if grep -qP 'declare.*@llvm\.(x86|aarch64|arm|nvptx|amdgcn)\.' "$1"; then
+  grep -q 'target-features' "$1" || exit 1
+fi
+```
+
 **llubi oracle (middle-end) — pattern=wrong_output:**
 ```bash
 cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
 set -eo pipefail
 if grep -q " undef" "$1"; then exit 1; fi
+if grep -qP 'declare.*@llvm\.(x86|aarch64|arm|nvptx|amdgcn)\.' "$1"; then
+  grep -q 'target-features' "$1" || exit 1
+fi
 timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt
 timeout 30 opt -passes='<pass_name>' "$1" -S > _opt.ll
 timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 _opt.ll > _out.txt
@@ -133,6 +143,9 @@ cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
 set -o pipefail
 if grep -q " undef" "$1"; then exit 1; fi
+if grep -qP 'declare.*@llvm\.(x86|aarch64|arm|nvptx|amdgcn)\.' "$1"; then
+  grep -q 'target-features' "$1" || exit 1
+fi
 timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt || exit 1
 timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 -
 ret=$?
@@ -147,6 +160,9 @@ cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
 set -o pipefail
 if grep -q " undef" "$1"; then exit 1; fi
+if grep -qP 'declare.*@llvm\.(x86|aarch64|arm|nvptx|amdgcn)\.' "$1"; then
+  grep -q 'target-features' "$1" || exit 1
+fi
 timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt || exit 1
 timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 -
 ret=$?
@@ -161,6 +177,9 @@ cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
 set -eo pipefail
 if grep -q " undef" "$1"; then exit 1; fi
+if grep -qP 'declare.*@llvm\.(x86|aarch64|arm|nvptx|amdgcn)\.' "$1"; then
+  grep -q 'target-features' "$1" || exit 1
+fi
 # Reject IR where main() has parameters — llubi_legacy and lli disagree on argc/argv
 grep -qP 'define\s+\S+\s+@main\s*\(\s*\)' "$1" || exit 1
 timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt
@@ -175,6 +194,9 @@ cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
 set -o pipefail
 if grep -q " undef" "$1"; then exit 1; fi
+if grep -qP 'declare.*@llvm\.(x86|aarch64|arm|nvptx|amdgcn)\.' "$1"; then
+  grep -q 'target-features' "$1" || exit 1
+fi
 # Reject IR where main() has parameters — llubi_legacy and lli disagree on argc/argv
 grep -qP 'define\s+\S+\s+@main\s*\(\s*\)' "$1" || exit 1
 timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt || exit 1
@@ -191,6 +213,9 @@ cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
 set -o pipefail
 if grep -q " undef" "$1"; then exit 1; fi
+if grep -qP 'declare.*@llvm\.(x86|aarch64|arm|nvptx|amdgcn)\.' "$1"; then
+  grep -q 'target-features' "$1" || exit 1
+fi
 # Reject IR where main() has parameters — llubi_legacy and lli disagree on argc/argv
 grep -qP 'define\s+\S+\s+@main\s*\(\s*\)' "$1" || exit 1
 timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt || exit 1
@@ -200,13 +225,16 @@ ret=$?
 test $ret -eq 124
 SCRIPT
 ```
-
 **lli oracle (backend) — pattern=nonzero_exit:**
+
 ```bash
 cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
 set -o pipefail
 if grep -q " undef" "$1"; then exit 1; fi
+if grep -qP 'declare.*@llvm\.(x86|aarch64|arm|nvptx|amdgcn)\.' "$1"; then
+  grep -q 'target-features' "$1" || exit 1
+fi
 timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt || exit 1
 timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 lli -
 ret=$?
@@ -216,11 +244,15 @@ SCRIPT
 ```
 
 **lli oracle (backend) — pattern=infinite_loop:**
+
 ```bash
 cat > interestingness.sh <<'SCRIPT'
 #!/bin/bash
 set -o pipefail
 if grep -q " undef" "$1"; then exit 1; fi
+if grep -qP 'declare.*@llvm\.(x86|aarch64|arm|nvptx|amdgcn)\.' "$1"; then
+  grep -q 'target-features' "$1" || exit 1
+fi
 timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt || exit 1
 timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 lli -
 ret=$?
@@ -228,7 +260,6 @@ ret=$?
 test $ret -eq 124
 SCRIPT
 ```
-
 Then:
 ```
 chmod +x interestingness.sh

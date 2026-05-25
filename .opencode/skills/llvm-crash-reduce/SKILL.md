@@ -12,6 +12,8 @@ All LLVM tools are on PATH: `opt`, `llc`, `lli`, `llvm-reduce`, `clang`, `alive-
 
 **CRITICAL: Reduction operates exclusively on LLVM IR. Never compile IR to native binaries for verification.**
 
+**CRITICAL — Target intrinsics require target-features:** If the reproducer IR contains target-specific intrinsic calls (e.g. `@llvm.x86.*`), llvm-reduce will strip the `"target-features"` attribute unless your interestingness.sh rejects such candidates. Every interestingness.sh below includes a guard for this — do NOT remove it.
+
 ### 1. Read metadata from extract.json
 Read `extract.json` and note:
 - `oracle` — `opt` for middle-end crash, `llc` for backend crash.
@@ -68,6 +70,9 @@ If crash is in llc (not opt), skip bisect and go directly to llvm-reduce. The in
 cat > interestingness.sh <<'EOF'
 #!/bin/bash
 set -e
+if grep -qP 'declare.*@llvm\.(x86|aarch64|arm|nvptx|amdgcn)\.' "$1"; then
+  grep -q 'target-features' "$1" || exit 1
+fi
 timeout 30 opt -passes='<pass_name>' "$1" 2>&1 | grep -qF "<pattern>"
 EOF
 chmod +x interestingness.sh
@@ -79,6 +84,9 @@ llvm-reduce --test=interestingness.sh before.ll
 cat > interestingness.sh <<'EOF'
 #!/bin/bash
 set -e
+if grep -qP 'declare.*@llvm\.(x86|aarch64|arm|nvptx|amdgcn)\.' "$1"; then
+  grep -q 'target-features' "$1" || exit 1
+fi
 timeout 30 llc "$1" 2>&1 | grep -qF "<crash_pattern>"
 EOF
 chmod +x interestingness.sh

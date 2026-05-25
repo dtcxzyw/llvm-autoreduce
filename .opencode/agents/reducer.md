@@ -56,6 +56,16 @@ You are an LLVM bug reduction agent. Read `extract.json` to determine the bug ty
 
 **CRITICAL — lli oracle main() parameters:** For backend miscompilation (oracle=lli), the reproducer IR's `main()` function MUST have NO parameters — `i32 @main()` with empty parentheses. `llubi_legacy` does not pass command-line arguments while `lli` does, so a `main(i32 %argc, ptr %argv)` will produce different outputs even on a correct backend. If the reproducer has parameters, strip them: change the signature to `i32 @main()`, replace `%argc` uses with `0`, replace `%argv` uses with `null`. The interestingness scripts include a grep guard that rejects IR with non-empty main() params — this prevents llvm-reduce from moving instructions into the parameter list.
 
+**CRITICAL — Target intrinsics require target-features:** When the reproducer IR contains target-specific intrinsic calls (e.g. `@llvm.x86.*`, `@llvm.aarch64.*`), the calling functions MUST have a `"target-features"` attribute. llvm-reduce will strip this attribute if your interestingness.sh does not reject such candidates. Every interestingness.sh MUST include a guard: if the IR declares target intrinsics but has no `target-features` attribute, exit 1. This prevents llvm-reduce from producing a reduced IR where the intrinsic becomes invalid because the required ISA extension is not enabled.
+
+The guard pattern (insert after the undef check, before oracle commands):
+```bash
+# Reject IR with target intrinsics but no target-features
+if grep -qP 'declare.*@llvm\.(x86|aarch64|arm|nvptx|amdgcn)\.' "$1"; then
+  grep -q 'target-features' "$1" || exit 1
+fi
+```
+
 **CRITICAL — Self-validate after writing result.json:** After writing checkpoint result.json (step 6) and final result.json (step 9), run `verify-result`. If it fails (exit ≠ 0), fix the issue and re-run until it passes. A passing verify-result confirms the daemon's verification will also pass.
 
 **CRITICAL: You MUST NOT read or write any files outside the current working directory.** All temporary files, intermediate outputs, and final results must stay within the current working directory. Do not use /tmp, /home, /etc, /var, or any other system directories. This is a strict security requirement — violation will cause the task to be rejected.

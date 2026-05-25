@@ -41,7 +41,14 @@ If none of the above match, classify as `type: "unrelated"`.
 
 **CRITICAL: You MUST NOT read or write any files outside the current working directory.** All operations (bash, file reads, file writes) are confined to the current working directory and its subdirectories. Do not access /tmp, /home, /etc, /var, or any other system directory. Violating this rule is a security violation.
 
-Read `issue.md` for the bug report context. Inspect ALL files in the working directory — Godbolt sources (`godbolt_1`, `godbolt_2`, ...), attachments (`attachment1`, `attachment2`, ...), and inline code blocks in the issue body. These are your reproducer sources.
+**0. Read `issue.md` and understand what the reporter is actually reporting.** The issue title and body describe the bug the reporter experienced. The reproducer files (Godbolt IR, C source, attachments) may contain incidental bugs beyond what the reporter described. You MUST classify based on the reported bug, not any incidental crash or miscompilation in the reproducer.
+
+Inspect ALL files in the working directory — Godbolt sources (`godbolt_1`, `godbolt_2`, ...), attachments (`attachment1`, `attachment2`, ...), and inline code blocks in the issue body. These are your reproducer sources.
+
+**Issue type classification (determine from the issue text FIRST, before running any tool):**
+- **Crash** — the issue describes a compiler crash: "crash", "assertion", "segfault", "ICE", "internal compiler error", "abort", "stack dump", "fatal error", "PLEASE submit a bug report"
+- **Miscompilation** — the issue describes wrong output or incorrect execution: "wrong result", "miscompile", "miscompilation", "incorrect result", "wrong codegen", "produces wrong value", "output differs", "generates incorrect"
+- **Missed optimization (→ classify as `unrelated` immediately)** — the issue describes codegen quality, NOT a functional bug: "bad codegen", "poor code generation", "missed optimization", "generates suboptimal code", "should fold", "should optimize", "performance regression", "slow code", "generates worse code", "poor assembly", "codegen regression", "redundant instructions", "unnecessary instructions", "does not fold". These are NOT bugs we can reduce — there is no crash signature or oracle mismatch to verify against. **Skip reproduction entirely and write extract.json with `type: "unrelated"`.**
 
 **File type identification:** Files have no extensions — you MUST identify each file's actual type by reading its first 5-10 non-empty lines. LLVM IR files start with `; ModuleID`, `target triple`, `define`, `declare`, or `source_filename`. C/C++ files contain `#include`, `int main`, function signatures, etc. Do NOT use `file` — it cannot distinguish C from C++. When compiling C/C++ sources, use `clang -x c` or `clang -x c++` explicitly.
 
@@ -51,7 +58,16 @@ Read `issue.md` for the bug report context. Inspect ALL files in the working dir
 
 Your job:
 1. **Reproduce the bug first.** Run the appropriate toolchain binary to reproduce the crash or miscompilation. Wrap toolchain commands with `timeout 60`. Stack traces and crash output quoted in the issue body are REFERENCE HINTS ONLY — the pattern field MUST come from actual toolchain output produced by running the tool in this workdir. This validates the reproducer is functional before downstream stages spend time on it.
- 2. **Identify the bug type** — classify as `crash` (opt/llc crash with stack trace or assertion), `miscompilation` (wrong code generation), or `unrelated`.
+
+   **CRITICAL — Target intrinsics require target-features:** When IR contains target-specific intrinsics (e.g. `@llvm.x86.`, `@llvm.aarch64.`, `@llvm.arm.`, `@llvm.nvptx.`, `@llvm.amdgcn.`), the functions calling them MUST have a `"target-features"` attribute enabling the required ISA extensions. Without this, opt/llc may silently fail, produce wrong output, or crash for reasons unrelated to the reported bug. llvm-reduce will strip `"target-features"` if not protected. Before writing extract.json, verify that every function using target intrinsics has appropriate `"target-features"` set. If the reproducer lacks them, add the attribute — it should enable the specific ISA extension required by the intrinsic (e.g. `+avx512vbmi` for `llvm.x86.avx512.permvar.qi.512`, `+avx512bw` for `llvm.x86.avx512.permvar.hi.512`).
+
+  2. **Identify the bug type** — classify as `crash` (opt/llc crash with stack trace or assertion), `miscompilation` (wrong code generation), or `unrelated`.
+
+     **CRITICAL — Mismatch check (cross-reference with issue from step 0):** After reproducing the bug, verify it aligns with what the reporter described:
+     - If the issue describes a crash but you only find a miscompilation → `unrelated`
+     - If the issue describes a miscompilation but you only find a crash → `unrelated`
+     - **If the issue explicitly states the tool does NOT crash** (e.g. "With llc this actually generates good code", "does not crash", "no ICE"), but you find a crash → `unrelated`. The crash is a different bug from what the reporter filed — the reproducer may contain multiple bugs, but only the reporter's described bug matters.
+     - If the issue is about missed optimization / codegen quality (step 0) → `unrelated`
 
     **Distinguishing mid-end vs backend:**
 
