@@ -303,10 +303,18 @@ If llvm-reduce gets stuck on a specific delta pass (check its progress output fo
 
 For middle-end bugs with a function pass, try upgrading the oracle from llubi to alive2. This produces a stronger result.
 
+**alive2 single-function requirement:** The IR submitted to alive2 MUST contain exactly 1 function definition (other `declare` declarations and global variables are allowed as needed). The verification step will reject IR with 0 or 2+ function definitions. Use `llvm-extract` to isolate a single function before running alive-tv.
+
 Determine if the buggy pass is a function pass. If YES, extract a single function:
 ```
 llvm-extract -func=<function_name> before.ll -S -o single_func.ll
 ```
+
+Verify the extracted file contains exactly 1 `define`:
+```
+grep -c '^define ' single_func.ll
+```
+Output must be `1`. If `llvm-extract` produces 0 or 2+ definitions (unusual), manually edit the IR to keep only the buggy function's definition (preserve any needed `declare` declarations and global variables).
 
 Test with alive-tv:
 ```
@@ -315,7 +323,7 @@ alive-tv --disable-undef-input --smt-to=10000 single_func.ll __opt.ll
 ```
 
 Check the output:
-- "incorrect transformation" count > 0 or "ERROR: Value mismatch" → alive2 upgrade succeeded, update result.json with `oracle: "alive2"`, `alive2_args: "--disable-undef-input --smt-to=10000"`, `llubi_args: ""`.
+- "incorrect transformation" count > 0 or "ERROR: Value mismatch" → alive2 upgrade succeeded. **Before writing result.json, verify single_func.ll has exactly 1 function definition.** Then update result.json with `oracle: "alive2"`, `alive2_args: "--disable-undef-input --smt-to=10000"`, `llubi_args: ""`, and set `ir_file` to the single-function `.ll` file.
 - "0 incorrect transformations" + "Transformation seems to be correct!" → no bug visible to alive2, keep llubi.
 - "Alive2 approximated the semantics" → **NOT a valid upgrade**, keep llubi.
 - Unsupported intrinsic/metadata/function → **NOT a valid upgrade**, keep llubi.
@@ -360,6 +368,8 @@ Verify the reduced IR still reproduces the miscompilation with the single pass. 
   "alive2_args": "--disable-undef-input --smt-to=10000"
 }
 ```
+
+The `ir_file` for alive2 oracle MUST contain exactly 1 function definition. Function declarations (`declare`) and global variables are unrestricted. The verification step will reject IR with 0 or 2+ function definitions.
 
 **result.json (llubi):**
 ```json

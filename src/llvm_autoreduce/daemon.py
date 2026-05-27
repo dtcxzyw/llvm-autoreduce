@@ -640,12 +640,30 @@ _ALIVE2_INCORRECT_RE = re.compile(
 _ALIVE2_APPROXIMATION_MARKER = "Alive2 approximated the semantics of the programs"
 
 
+_DEFINE_RE = re.compile(r"^\s*define\s", re.MULTILINE)
+
+
+def _check_single_function(ir_file, workdir_path):
+    safe_ir = _safe_relative(workdir_path, ir_file)
+    try:
+        content = workdir.read(safe_ir)
+    except (ValueError, OSError):
+        return False
+    count = len(_DEFINE_RE.findall(content))
+    if count != 1:
+        log.error("alive2 verify: IR has %d function definitions, need exactly 1", count)
+        return False
+    return True
+
+
 def verify_alive2(result, workdir_path):
     safe_ir = _safe_relative(workdir_path, result["ir_file"])
     if not _verify_ir_valid(result["ir_file"], workdir_path):
         return False
     if not _check_no_undef(result["ir_file"], workdir_path):
         log.error("alive2 verify: IR contains undef")
+        return False
+    if not _check_single_function(result["ir_file"], workdir_path):
         return False
     args = result.get("args", "")
     # alive2_args is produced by the reducer agent (trusted oracle).
