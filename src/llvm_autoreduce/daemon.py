@@ -24,6 +24,10 @@ from . import config, extract, github, opencode, tools, workdir
 
 log = logging.getLogger("daemon")
 
+# In-memory mapping: llvm issue id → bisect-service issue number.
+# Tracked so a 10-minute-delayed callback can fetch the bisect result.
+_bisect_tracker: dict[int, int] = {}
+
 
 def setup_logging():
     config.WORK_ROOT.mkdir(parents=True, exist_ok=True)
@@ -1705,16 +1709,79 @@ def reprocess_issue(issue):
             ir_file = result["ir_file"]
             ir_path = _safe_relative(wd, ir_file)
             ir_content = workdir.read(ir_path)
-            github.create_bisect_issue(
+            bisect_num = github.create_bisect_issue(
                 issue_id,
                 result.get("oracle", "opt"),
                 result.get("args", ""),
                 meta.get("pattern", ""),
                 ir_content,
             )
+            if bisect_num is not None:
+                _bisect_tracker[issue_id] = bisect_num
+                timer = threading.Timer(600, _check_bisect_result, args=(issue_id, bisect_num))
+                timer.daemon = True
+                timer.start()
         except Exception:
             log.exception("issue=%d bisect issue creation failed", issue_id)
     mark_processed(issue_id)
+
+
+def _determine_regression_version(commit_sha):
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(config.LLVM_TRUNK), "log", "-1", "--format=%ct", commit_sha],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return None
+        commit_time = int(result.stdout.strip())
+    except Exception:
+        log.exception("bisect: failed to get commit time for %s", commit_sha)
+        return None
+
+    version = None
+    for x in range(13, 100):
+        tag = f"llvmorg-{x}-init"
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(config.LLVM_TRUNK), "log", "-1", "--format=%ct", tag],
+                capture_output=True, text=True, timeout=30,
+            )
+        except Exception:
+            return None
+        if result.returncode != 0:
+            break
+        try:
+            tag_time = int(result.stdout.strip())
+        except (ValueError, TypeError):
+            return None
+        if tag_time < commit_time:
+            version = x
+        else:
+            break
+    return version
+
+
+def _check_bisect_result(llvm_issue_id, bisect_issue_number):
+    try:
+        comments = github.get_bisect_issue_comments(bisect_issue_number)
+        for comment in comments:
+            if comment.get("user", {}).get("login") == "github-actions":
+                body = comment.get("body", "")
+                sha_match = re.search(r"\b([0-9a-f]{40})\b", body)
+                if sha_match:
+                    commit_sha = sha_match.group(1)
+                    log.info("issue=%d bisect found SHA: %s", llvm_issue_id, commit_sha)
+                    version = _determine_regression_version(commit_sha)
+                    if version:
+                        label = f"regression:{version}"
+                        github.add_labels_to_issue(llvm_issue_id, [label])
+                        log.info("issue=%d labeled %s", llvm_issue_id, label)
+                    break
+    except Exception:
+        log.exception("issue=%d bisect result check failed", llvm_issue_id)
+    finally:
+        _bisect_tracker.pop(llvm_issue_id, None)
 
 
 def main():

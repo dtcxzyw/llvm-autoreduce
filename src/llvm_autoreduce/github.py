@@ -256,7 +256,18 @@ def create_bisect_issue(issue_id, oracle, args, pattern, ir_content):
             json={"title": title, "body": body, "labels": ["bisect"]},
             headers=custom_headers,
         )
-        bisect_url = resp.json()["html_url"]
-        log.info("issue=%d bisect task created: %s", issue_id, bisect_url)
+        data = resp.json()
+        bisect_url = data["html_url"]
+        bisect_number = data["number"]
+        log.info("issue=%d bisect task created: %s (#%d)", issue_id, bisect_url, bisect_number)
+        return bisect_number
     except Exception:
         log.exception("issue=%d bisect issue creation failed", issue_id)
+        return None
+
+
+def get_bisect_issue_comments(bisect_issue_number):
+    url = f"{GITHUB_API}/repos/{BISECT_REPO}/issues/{bisect_issue_number}/comments"
+    custom_headers = {"Authorization": f"Bearer {LLVM_BISECT_TOKEN}"}
+    resp = _request("GET", url, params={"per_page": 100}, headers=custom_headers)
+    return resp.json()
