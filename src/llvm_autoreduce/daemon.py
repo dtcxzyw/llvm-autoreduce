@@ -1646,7 +1646,12 @@ def reprocess_issue(issue):
             labels.add("llvm:SLPVectorizer")
         if "loop-vectorize" in reducer_args:
             labels.add("vectorizers")
+    existing = github.get_issue_labels(issue_id)
+    for label in ("crash", "new issue"):
+        if label in existing:
+            github.remove_label_from_issue(issue_id, label)
     github.add_labels_to_issue(issue_id, labels)
+    github.set_issue_type(issue_id, "Bug")
 
     # Step 6: generate report and submit
     # Report is generated mechanically from verified data (meta, result, reduced IR)

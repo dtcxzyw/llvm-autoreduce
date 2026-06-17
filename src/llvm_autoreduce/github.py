@@ -171,6 +171,56 @@ def add_labels_to_issue(issue_number, labels):
         log.exception("issue=%d label failed: %s", issue_number, labels)
 
 
+def get_issue_labels(issue_number):
+    """Get labels on the original issue in llvm/llvm-project."""
+    if not AUTOREDUCE_LLVM_TOKEN:
+        return []
+    url = f"{GITHUB_API}/repos/{SOURCE_REPO}/issues/{issue_number}"
+    custom_headers = {
+        "Authorization": f"Bearer {AUTOREDUCE_LLVM_TOKEN}",
+    }
+    try:
+        resp = _request("GET", url, headers=custom_headers)
+        return [label["name"] for label in resp.json().get("labels", [])]
+    except Exception:
+        log.exception("issue=%d get labels failed", issue_number)
+        return []
+
+
+def remove_label_from_issue(issue_number, label_name):
+    """Remove a label from the original issue in llvm/llvm-project."""
+    if not AUTOREDUCE_LLVM_TOKEN:
+        return
+    url = f"{GITHUB_API}/repos/{SOURCE_REPO}/issues/{issue_number}/labels/{label_name}"
+    custom_headers = {
+        "Authorization": f"Bearer {AUTOREDUCE_LLVM_TOKEN}",
+    }
+    try:
+        _request("DELETE", url, headers=custom_headers)
+        log.info("issue=%d removed label: %s", issue_number, label_name)
+    except Exception:
+        log.exception("issue=%d remove label failed: %s", issue_number, label_name)
+
+
+def set_issue_type(issue_number, issue_type):
+    """Set the issue type on the original issue in llvm/llvm-project.
+
+    Uses AUTOREDUCE_LLVM_TOKEN (same token as label operations).
+    """
+    if not AUTOREDUCE_LLVM_TOKEN:
+        log.warning("type: AUTOREDUCE_LLVM_TOKEN not set, cannot set type issue=%d", issue_number)
+        return
+    url = f"{GITHUB_API}/repos/{SOURCE_REPO}/issues/{issue_number}"
+    custom_headers = {
+        "Authorization": f"Bearer {AUTOREDUCE_LLVM_TOKEN}",
+    }
+    try:
+        _request("PATCH", url, json={"type": issue_type}, headers=custom_headers)
+        log.info("issue=%d set type: %s", issue_number, issue_type)
+    except Exception:
+        log.exception("issue=%d set type failed: %s", issue_number, issue_type)
+
+
 def create_bisect_issue(issue_id, oracle, args, pattern, ir_content):
     """Create a bisect task on dtcxzyw/llvm-bisect-service for crash bugs.
 
