@@ -1766,7 +1766,7 @@ def _check_bisect_result(llvm_issue_id, bisect_issue_number):
     try:
         comments = github.get_bisect_issue_comments(bisect_issue_number)
         for comment in comments:
-            if comment.get("user", {}).get("login") == "github-actions":
+            if (comment.get("user", {}).get("login") or "").startswith("github-actions"):
                 body = comment.get("body", "")
                 sha_match = re.search(r"\b([0-9a-f]{40})\b", body)
                 if sha_match:
