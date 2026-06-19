@@ -1765,19 +1765,19 @@ def _determine_regression_version(commit_sha):
 def _check_bisect_result(llvm_issue_id, bisect_issue_number):
     try:
         comments = github.get_bisect_issue_comments(bisect_issue_number)
+        commit_sha = None
         for comment in comments:
             if (comment.get("user", {}).get("login") or "").startswith("github-actions"):
                 body = comment.get("body", "")
-                sha_match = re.search(r"\b([0-9a-f]{40})\b", body)
-                if sha_match:
+                for sha_match in re.finditer(r"\b([0-9a-f]{40})\b", body):
                     commit_sha = sha_match.group(1)
-                    log.info("issue=%d bisect found SHA: %s", llvm_issue_id, commit_sha)
-                    version = _determine_regression_version(commit_sha)
-                    if version:
-                        label = f"regression:{version}"
-                        github.add_labels_to_issue(llvm_issue_id, [label])
-                        log.info("issue=%d labeled %s", llvm_issue_id, label)
-                    break
+        if commit_sha:
+            log.info("issue=%d bisect found SHA: %s", llvm_issue_id, commit_sha)
+            version = _determine_regression_version(commit_sha)
+            if version:
+                label = f"regression:{version}"
+                github.add_labels_to_issue(llvm_issue_id, [label])
+                log.info("issue=%d labeled %s", llvm_issue_id, label)
     except Exception:
         log.exception("issue=%d bisect result check failed", llvm_issue_id)
     finally:
