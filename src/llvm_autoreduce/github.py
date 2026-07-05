@@ -2,6 +2,7 @@
 
 import logging
 import os
+import shlex
 import time
 
 import requests
@@ -221,6 +222,20 @@ def set_issue_type(issue_number, issue_type):
         log.exception("issue=%d set type failed: %s", issue_number, issue_type)
 
 
+def _build_bisect_script(oracle, args, pattern):
+    """Build the shell script for a bisect task. Exposed for testing."""
+    exec_name = "opt-exec" if oracle == "opt" else "llc-exec"
+    suppress = "--disable-output" if oracle == "opt" else "-o /dev/null"
+    return (
+        f"./{exec_name} {args} test.ll {suppress} 2>&1 | "
+        f"grep -q {shlex.quote(pattern)}\n"
+        f"if [ $? -eq 0 ]; then\n"
+        f"    exit 1\n"
+        f"fi\n"
+        f"exit 0"
+    )
+
+
 def create_bisect_issue(issue_id, oracle, args, pattern, ir_content):
     """Create a bisect task on dtcxzyw/llvm-bisect-service for crash bugs.
 
@@ -230,15 +245,7 @@ def create_bisect_issue(issue_id, oracle, args, pattern, ir_content):
     if not LLVM_BISECT_TOKEN:
         log.warning("bisect: LLVM_BISECT_TOKEN not set, cannot create bisect issue=%d", issue_id)
         return
-    exec_name = "opt-exec" if oracle == "opt" else "llc-exec"
-    suppress = "--disable-output" if oracle == "opt" else "-o /dev/null"
-    script = (
-        f'./{exec_name} {args} test.ll {suppress} 2>&1 | grep -q "{pattern}"\n'
-        f"if [ $? -eq 0 ]; then\n"
-        f"    exit 1\n"
-        f"fi\n"
-        f"exit 0"
-    )
+    script = _build_bisect_script(oracle, args, pattern)
     body_parts = [
         f"```\n{script}\n```",
         f"```\n{ir_content}\n```",
