@@ -2,12 +2,14 @@
 """Main daemon loop for llvm-autoreduce."""
 
 import atexit
-import contextlib
+# DISABLED: RLIMIT_AS removed, see below.
+# import contextlib
 import json
 import logging
 import os
 import re
-import resource
+# DISABLED: RLIMIT_AS removed from _run_process.
+# import resource
 import shlex
 import shutil
 import signal
@@ -292,20 +294,21 @@ def _run_process(cmd, **kwargs):
     stdout = kwargs.pop("stdout", subprocess.PIPE)
     stderr = kwargs.pop("stderr", subprocess.PIPE)
 
-    old = resource.getrlimit(resource.RLIMIT_AS)
-    limit = 8 * 1024 ** 3
-    try:
-        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
-    except (ValueError, OSError):
-        old = None
-    try:
-        proc = subprocess.Popen(
-            cmd, stdout=stdout, stderr=stderr, **kwargs,
-        )
-    finally:
-        if old is not None:
-            with contextlib.suppress(ValueError, OSError):
-                resource.setrlimit(resource.RLIMIT_AS, old)
+    # DISABLED 2026-07-08: RLIMIT_AS causes toolchain subprocesses to crash.
+    # See opencode.py for details on Bun/JavaScriptCore incompatibility.
+    # old = resource.getrlimit(resource.RLIMIT_AS)
+    # limit = 8 * 1024 ** 3
+    # try:
+    #     resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+    # except (ValueError, OSError):
+    #     old = None
+    proc = subprocess.Popen(
+        cmd, stdout=stdout, stderr=stderr, **kwargs,
+    )
+    # finally:
+    #     if old is not None:
+    #         with contextlib.suppress(ValueError, OSError):
+    #             resource.setrlimit(resource.RLIMIT_AS, old)
 
     out_chunks = []
     err_chunks = []

@@ -1,9 +1,11 @@
 """opencode CLI subprocess wrapper."""
 
-import contextlib
+# DISABLED: RLIMIT_AS removed, see below.
+# import contextlib
 import logging
 import os
-import resource
+# DISABLED: RLIMIT_AS removed, see below.
+# import resource
 import subprocess
 import time
 
@@ -82,14 +84,18 @@ def run(agent, workdir, prompt, timeout, shutdown_check=None):
 
     # Pre-set RLIMIT_AS=16GB before fork so child inherits it; restore parent
     # limit immediately after. Replaces preexec_fn (deprecated in 3.11+).
-    # ACCEPTED RISK (R14): RLIMIT_AS is temporarily set on the parent process
-    # between setrlimit() and fork(). See daemon._run_process for details.
-    old = resource.getrlimit(resource.RLIMIT_AS)
-    limit = 16 * 1024 ** 3
-    try:
-        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
-    except (ValueError, OSError):
-        old = None
+    # ACCEPTED RISK (R14): RLIMIT_AS was temporarily set on the parent process
+    # between setrlimit() and fork() to bound agent virtual address space.
+    # DISABLED 2026-07-08: 8GB RLIMIT_AS causes Bun/JavaScriptCore to crash
+    # immediately with "ASSERTION FAILED: MemoryExhaustion" in opencode >= 1.17.13.
+    # The minimum functional limit is 10GB but we disable entirely for now pending
+    # a stable fix.
+    # old = resource.getrlimit(resource.RLIMIT_AS)
+    # limit = 16 * 1024 ** 3
+    # try:
+    #     resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+    # except (ValueError, OSError):
+    #     old = None
 
     log.info("opencode start agent=%s workdir=%s", agent, workdir)
     try:
@@ -102,9 +108,10 @@ def run(agent, workdir, prompt, timeout, shutdown_check=None):
                 stderr=subprocess.STDOUT,
             )
     finally:
-        if old is not None:
-            with contextlib.suppress(ValueError, OSError):
-                resource.setrlimit(resource.RLIMIT_AS, old)
+        pass
+        # if old is not None:
+        #     with contextlib.suppress(ValueError, OSError):
+        #         resource.setrlimit(resource.RLIMIT_AS, old)
 
     deadline = time.time() + timeout
     while True:
