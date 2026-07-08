@@ -80,12 +80,12 @@ def run(agent, workdir, prompt, timeout, shutdown_check=None):
         cmd.append("max")
     cmd.append(prompt)
 
-    # Pre-set RLIMIT_AS=8GB before fork so child inherits it; restore parent
+    # Pre-set RLIMIT_AS=16GB before fork so child inherits it; restore parent
     # limit immediately after. Replaces preexec_fn (deprecated in 3.11+).
     # ACCEPTED RISK (R14): RLIMIT_AS is temporarily set on the parent process
     # between setrlimit() and fork(). See daemon._run_process for details.
     old = resource.getrlimit(resource.RLIMIT_AS)
-    limit = 8 * 1024 ** 3
+    limit = 16 * 1024 ** 3
     try:
         resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
     except (ValueError, OSError):
