@@ -236,6 +236,32 @@ def _build_bisect_script(oracle, args, pattern):
     )
 
 
+def add_issue_to_project(issue_number, project_number=30, org="llvm", repo="llvm-project"):
+    """Add an issue to an organization-owned Projects V2 board.
+
+    Uses AUTOREDUCE_LLVM_TOKEN (write access to llvm/llvm-project).
+    Best-effort — failures are logged but do not affect the pipeline.
+    """
+    if not AUTOREDUCE_LLVM_TOKEN:
+        log.warning("project: AUTOREDUCE_LLVM_TOKEN not set, cannot add issue=%d to project=%d", issue_number, project_number)
+        return
+    url = f"{GITHUB_API}/orgs/{org}/projectsV2/{project_number}/items"
+    custom_headers = {
+        "Authorization": f"Bearer {AUTOREDUCE_LLVM_TOKEN}",
+        "X-GitHub-Api-Version": "2026-03-10",
+    }
+    try:
+        _request("POST", url, json={
+            "type": "Issue",
+            "owner": org,
+            "repo": repo,
+            "number": issue_number,
+        }, headers=custom_headers)
+        log.info("issue=%d added to project=%d", issue_number, project_number)
+    except Exception:
+        log.exception("issue=%d add to project=%d failed", issue_number, project_number)
+
+
 def create_bisect_issue(issue_id, oracle, args, pattern, ir_content):
     """Create a bisect task on dtcxzyw/llvm-bisect-service for crash bugs.
 

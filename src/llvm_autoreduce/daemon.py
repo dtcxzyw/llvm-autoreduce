@@ -2,12 +2,14 @@
 """Main daemon loop for llvm-autoreduce."""
 
 import atexit
+
 # DISABLED: RLIMIT_AS removed, see below.
 # import contextlib
 import json
 import logging
 import os
 import re
+
 # DISABLED: RLIMIT_AS removed from _run_process.
 # import resource
 import shlex
@@ -1781,6 +1783,7 @@ def _check_bisect_result(llvm_issue_id, bisect_issue_number):
                 label = f"regression:{version}"
                 github.add_labels_to_issue(llvm_issue_id, [label])
                 log.info("issue=%d labeled %s", llvm_issue_id, label)
+                github.add_issue_to_project(llvm_issue_id)
     except Exception:
         log.exception("issue=%d bisect result check failed", llvm_issue_id)
     finally:
