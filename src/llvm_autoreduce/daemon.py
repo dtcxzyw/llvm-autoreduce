@@ -28,9 +28,13 @@ from . import config, extract, github, opencode, tools, workdir
 
 log = logging.getLogger("daemon")
 
-# In-memory mapping: llvm issue id → bisect-service issue number.
-# Tracked so a 10-minute-delayed callback can fetch the bisect result.
-_bisect_tracker: dict[int, int] = {}
+# In-memory mapping: llvm issue id → bisect polling state.
+# State fields: bisect_num (int), attempts (int), started (float).
+# Polls every 5 minutes, max 24 attempts (2 hours).
+_bisect_tracker: dict[int, dict] = {}
+
+_BISECT_POLL_INTERVAL = 300
+_BISECT_MAX_ATTEMPTS = 24
 
 
 def setup_logging():
@@ -1722,8 +1726,12 @@ def reprocess_issue(issue):
                 ir_content,
             )
             if bisect_num is not None:
-                _bisect_tracker[issue_id] = bisect_num
-                timer = threading.Timer(600, _check_bisect_result, args=(issue_id, bisect_num))
+                _bisect_tracker[issue_id] = {
+                    "bisect_num": bisect_num,
+                    "attempts": 0,
+                    "started": time.time(),
+                }
+                timer = threading.Timer(_BISECT_POLL_INTERVAL, _check_bisect_result, args=(issue_id,))
                 timer.daemon = True
                 timer.start()
         except Exception:
@@ -1767,7 +1775,12 @@ def _determine_regression_version(commit_sha):
     return version
 
 
-def _check_bisect_result(llvm_issue_id, bisect_issue_number):
+def _check_bisect_result(llvm_issue_id):
+    state = _bisect_tracker.get(llvm_issue_id)
+    if state is None:
+        return
+    bisect_issue_number = state["bisect_num"]
+    state["attempts"] += 1
     try:
         comments = github.get_bisect_issue_comments(bisect_issue_number)
         commit_sha = None
@@ -1784,10 +1797,17 @@ def _check_bisect_result(llvm_issue_id, bisect_issue_number):
                 github.add_labels_to_issue(llvm_issue_id, [label])
                 log.info("issue=%d labeled %s", llvm_issue_id, label)
                 github.add_issue_to_project(llvm_issue_id)
+            _bisect_tracker.pop(llvm_issue_id, None)
+            return
     except Exception:
         log.exception("issue=%d bisect result check failed", llvm_issue_id)
-    finally:
+    if state["attempts"] >= _BISECT_MAX_ATTEMPTS:
+        log.warning("issue=%d bisect: max attempts reached, giving up", llvm_issue_id)
         _bisect_tracker.pop(llvm_issue_id, None)
+    else:
+        timer = threading.Timer(_BISECT_POLL_INTERVAL, _check_bisect_result, args=(llvm_issue_id,))
+        timer.daemon = True
+        timer.start()
 
 
 def main():
