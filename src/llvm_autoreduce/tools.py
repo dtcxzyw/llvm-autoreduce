@@ -107,7 +107,11 @@ def _sync_git():
 
 def update_all():
     log.info("toolchain update start")
-    _sync_git()
+    try:
+        _sync_git()
+    except subprocess.CalledProcessError as exc:
+        log.error("git operation failed: %s", exc)
+        raise BuildError(str(exc)) from exc
     build_log = WORK_DIR / "build.log"
     with open(build_log, "w") as f:
         proc = subprocess.Popen(
