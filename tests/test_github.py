@@ -36,6 +36,57 @@ class TestBuildBisectScript:
         script = _build_bisect_script("opt", "", "can't parse")
         assert shlex.quote("can't parse") in script
 
+    def test_args_with_angle_brackets(self):
+        script = _build_bisect_script("opt", "-passes=loop-unroll<O3>", "stack dump")
+        cmdline, _, _ = script.partition(" | ")
+        assert shlex.split(cmdline) == [
+            "./opt-exec",
+            "-passes=loop-unroll<O3>",
+            "test.ll",
+            "--disable-output",
+            "2>&1",
+        ]
+
+    def test_args_multiple_tokens(self):
+        script = _build_bisect_script("opt", "-passes=licm -verify-each", "stack dump")
+        cmdline, _, _ = script.partition(" | ")
+        assert shlex.split(cmdline) == [
+            "./opt-exec",
+            "-passes=licm",
+            "-verify-each",
+            "test.ll",
+            "--disable-output",
+            "2>&1",
+        ]
+
+    def test_args_with_existing_quotes(self):
+        script = _build_bisect_script("opt", "-passes='default<O2>'", "stack dump")
+        cmdline, _, _ = script.partition(" | ")
+        assert shlex.split(cmdline) == [
+            "./opt-exec",
+            "-passes=default<O2>",
+            "test.ll",
+            "--disable-output",
+            "2>&1",
+        ]
+
+    def test_args_with_shell_metachars(self):
+        script = _build_bisect_script("opt", "-passes=licm;rm -rf /", "x")
+        cmdline, _, _ = script.partition(" | ")
+        assert shlex.split(cmdline) == [
+            "./opt-exec",
+            "-passes=licm;rm",
+            "-rf",
+            "/",
+            "test.ll",
+            "--disable-output",
+            "2>&1",
+        ]
+
+    def test_args_empty(self):
+        script = _build_bisect_script("opt", "", "crash")
+        assert "./opt-exec test.ll --disable-output 2>&1" in script
+
     def test_oracle_llc(self):
         script = _build_bisect_script("llc", "", "crash")
         assert "./llc-exec" in script

@@ -226,8 +226,16 @@ def _build_bisect_script(oracle, args, pattern):
     """Build the shell script for a bisect task. Exposed for testing."""
     exec_name = "opt-exec" if oracle == "opt" else "llc-exec"
     suppress = "--disable-output" if oracle == "opt" else "-o /dev/null"
+    # args is a shell word list (possibly with agent-provided quoting);
+    # re-quote each token so metacharacters like <, >, $, |, ; in pass
+    # options (e.g. -passes=loop-unroll<O3>) cannot be interpreted by bash.
+    if args:
+        quoted_args = shlex.join(shlex.split(args))
+        cmd = f"./{exec_name} {quoted_args} test.ll {suppress} 2>&1"
+    else:
+        cmd = f"./{exec_name} test.ll {suppress} 2>&1"
     return (
-        f"./{exec_name} {args} test.ll {suppress} 2>&1 | "
+        f"{cmd} | "
         f"grep -q {shlex.quote(pattern)}\n"
         f"if [ $? -eq 0 ]; then\n"
         f"    exit 1\n"
