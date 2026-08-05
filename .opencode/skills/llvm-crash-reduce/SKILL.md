@@ -50,7 +50,7 @@ Look for the last line matching `BISECT: running pass (M) <PassName> on ...` bef
 
 ### 4. Extract the single pass name and capture IR before it
 
-The bisect log prints the pass name (e.g. `BISECT: running pass (N) InstCombine on ...`). Convert to the `-passes=` form (e.g. `-passes=gvn`). Do NOT guess from filenames in crash backtraces.
+The bisect log prints the pass name (e.g. `BISECT: running pass (N) InstCombine on ...`). Convert to the `-passes=` form (e.g. `-passes=instcombine<no-verify-fixpoint>`). Do NOT guess from filenames in crash backtraces.
 
 **If the crashing pass is InstCombine, you MUST always write it as `instcombine<no-verify-fixpoint>`** — never bare `instcombine`. This applies everywhere the pass is used: interestingness.sh, reproduction commands, and the `args` field in result.json. The daemon rejects `instcombine` without `instcombine<no-verify-fixpoint>` in both extract.json and result.json args. This only constrains how instcombine is written when it is already present — it is NOT a requirement to include instcombine.
 
