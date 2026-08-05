@@ -383,6 +383,24 @@ def _validate_verdict(verdict):
         raise ValueError(f"review.json malicious missing or not bool: {malicious!r}")
 
 
+def _check_instcombine_args(args, source):
+    """Require `instcombine<no-verify-fixpoint>` whenever args mention instcombine.
+
+    Applies to both extract.json and result.json args — the daemon never
+    reports a reproducer whose pipeline uses a bare instcombine pass.
+    A standalone instcombine pass must disable the fixpoint verification
+    loop: without `no-verify-fixpoint`, single-pass reproduction can hang
+    or behave differently than in-pipeline runs (where the surrounding
+    pipeline absorbs the fixpoint loop), producing non-reproducible
+    reproducers. This only constrains how instcombine is written when it
+    is already present — it is NOT a requirement to include instcombine.
+    """
+    if "instcombine" in args.lower() and "instcombine<no-verify-fixpoint>" not in args.lower():
+        raise ValueError(
+            f"{source} args must use instcombine<no-verify-fixpoint>: {args!r}"
+        )
+
+
 def _validate_meta(meta):
     """Validate extract.json schema. Agent output is trusted for content
     but required fields, enumerations, and path-safety are checked."""
@@ -403,10 +421,12 @@ def _validate_meta(meta):
         raise ValueError(f"extract.json reproducer_file contains path separators: {reproducer!r}")
     _args = meta.get("args", "")
     # args string passes through to the reducer agent's prompt — the
-    # extractor agent produces it and the reducer agent uses it. Both agents
-    # are trusted oracles; the daemon does not validate args contents.
+    # extractor agent produces it and the reducer agent uses it. Both
+    # agents are trusted oracles; the daemon validates only the mandatory
+    # instcombine<no-verify-fixpoint> option (see _check_instcombine_args).
     # Path traversal on reproducer_file is validated because the daemon
     # writes those files itself.
+    _check_instcombine_args(_args, "extract.json")
     pattern = meta.get("pattern", "")
     # pattern is a literal substring (not regex) matched against crash
     # output via plain string containment, or one of wrong_output /
@@ -488,16 +508,7 @@ def _validate_result(result):
         raise ValueError(
             f"result.json args must use legacy PM for backend passes, not -passes=: {_args!r}"
         )
-    # instcombine run in isolation MUST disable the fixpoint verification
-    # loop. Without `instcombine<no-verify-fixpoint>`, a standalone
-    # instcombine pass can hang or behave differently than in-pipeline
-    # runs (where the surrounding pipeline absorbs the fixpoint loop),
-    # producing non-reproducible reductions.
-    _args_lower = _args.lower()
-    if "instcombine" in _args_lower and "instcombine<no-verify-fixpoint>" not in _args_lower:
-        raise ValueError(
-            f"result.json args must use instcombine<no-verify-fixpoint>: {_args!r}"
-        )
+    _check_instcombine_args(_args, "result.json")
 
 
 def verify_crash(result, workdir_path, pattern):

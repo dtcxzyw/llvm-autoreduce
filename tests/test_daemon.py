@@ -106,6 +106,31 @@ class TestValidateMeta:
     def test_default_o2_args_ok(self):
         _validate_meta({"type": "crash", "pattern": "test", "oracle": "opt", "args": "-passes='default<O2>'"})
 
+    def test_instcombine_without_no_verify_fixpoint_raises(self):
+        with pytest.raises(ValueError, match="no-verify-fixpoint"):
+            _validate_meta({
+                "type": "crash", "pattern": "test", "oracle": "opt",
+                "args": "-passes=instcombine",
+            })
+
+    def test_instcombine_with_no_verify_fixpoint_ok(self):
+        _validate_meta({
+            "type": "crash", "pattern": "test", "oracle": "opt",
+            "args": "-passes=instcombine<no-verify-fixpoint>",
+        })
+
+    def test_instcombine_in_pipeline_with_option_ok(self):
+        _validate_meta({
+            "type": "crash", "pattern": "test", "oracle": "opt",
+            "args": "-passes='instcombine<no-verify-fixpoint>,licm'",
+        })
+
+    def test_non_instcombine_args_ok(self):
+        _validate_meta({
+            "type": "crash", "pattern": "test", "oracle": "opt",
+            "args": "-passes=licm",
+        })
+
 
 class TestValidateResult:
     def test_crash_ok(self):

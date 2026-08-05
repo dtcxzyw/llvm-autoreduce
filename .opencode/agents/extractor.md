@@ -56,6 +56,8 @@ Inspect ALL files in the working directory — Godbolt sources (`godbolt_1`, `go
 
 **Backend/codegen passes MUST use legacy pass manager.** Backend passes like codegenprepare are only registered in the legacy pass manager. When invoking such passes with `opt`, use the legacy flag syntax `-codegenprepare`, NOT the new-PM syntax `-passes=codegenprepare`. The new pass manager does not register codegen passes — `opt -passes=codegenprepare` will fail with "unknown pass name". The `args` field in extract.json must use legacy syntax for any backend pass.
 
+**CRITICAL — instcombine in args MUST always carry `<no-verify-fixpoint>`:** Whenever the reproduction args contain instcombine, write it as `instcombine<no-verify-fixpoint>` — never bare `instcombine`. Reproduce the bug with this option and confirm the pattern still matches. If the bug does NOT reproduce with `no-verify-fixpoint` enabled, do NOT fall back to bare `instcombine` — the daemon rejects bare `instcombine` in both extract.json and result.json args, so such a reproducer can never be reported. Classify the issue as `unrelated` instead. **This only constrains how instcombine is written when it is already present — it is NOT a requirement to include instcombine.**
+
 Your job:
 1. **Reproduce the bug first.** Run the appropriate toolchain binary to reproduce the crash or miscompilation. Wrap toolchain commands with `timeout 60`. Stack traces and crash output quoted in the issue body are REFERENCE HINTS ONLY — the pattern field MUST come from actual toolchain output produced by running the tool in this workdir. This validates the reproducer is functional before downstream stages spend time on it.
 

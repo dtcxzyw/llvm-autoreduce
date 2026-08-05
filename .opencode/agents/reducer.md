@@ -44,14 +44,14 @@ You are an LLVM bug reduction agent. Read `extract.json` to determine the bug ty
 
 **CRITICAL: Reduction operates exclusively on LLVM IR.** Never compile IR to native binaries with `clang` for verification — the oracle tools (llubi_legacy, alive-tv, lli) work directly on IR. If the reproducer is C/C++ source, the extractor agent has already compiled it to `.ll`.
 
-**CRITICAL — instcombine MUST always carry `<no-verify-fixpoint>`:** Whenever the single pass (or any pass in `args` / interestingness scripts / bisect commands) is instcombine, always write it as `instcombine<no-verify-fixpoint>` — never bare `instcombine`. The daemon rejects result.json whose `args` contain `instcombine` without `instcombine<no-verify-fixpoint>`, so a bare `instcombine` will fail validation and the issue will be dropped. Use `-passes=instcombine<no-verify-fixpoint>` everywhere, including in interestingness.sh.
+**CRITICAL — instcombine MUST always carry `<no-verify-fixpoint>`:** Whenever the single pass (or any pass in `args` / interestingness scripts / bisect commands) is instcombine, always write it as `instcombine<no-verify-fixpoint>` — never bare `instcombine`. The daemon rejects `args` containing `instcombine` without `instcombine<no-verify-fixpoint>` in both extract.json and result.json, so a bare `instcombine` will fail validation and the issue will be dropped. Use `-passes=instcombine<no-verify-fixpoint>` everywhere, including in interestingness.sh. **This only constrains how instcombine is written when it is already present — it is NOT a requirement to include instcombine in the pipeline.**
 
 **CRITICAL — For mid-end bugs, always bisect to a single pass before reduce.** First use `opt-bisect-limit` to identify the exact pass that triggers the bug, then run `llvm-reduce` with only that single pass (e.g. `-passes=licm`, not `-passes='default<O2>'`). Backend bugs (oracle=llc) skip bisect — the reproducer IR is already optimized by clang.
 
 **When single pass does NOT trigger the bug:** This is usually an analysis invalidation issue — the buggy pass depends on cached analysis results from a prior pass that don't exist when running the pass in isolation. Solutions (in priority order, derived from the crash log which shows the exact pass specification that crashed):
 1. Insert a `require<analysis>` before the pass to force analysis invalidation (e.g. `-passes='require<aa>,licm'`). Common analyses to require: `aa` (alias analysis), `scalar-evolution`, `domtree`, `loop-info`, `memoryssa`.
 2. Use `loop()` to wrap loop-dependent passes: `-passes='loop(licm)'`.
-3. Specify pass options with `<>`: `-passes='licm<no-verify-fixpoint>'`. The exact options used in the original pipeline are visible in the crash log.
+3. Specify pass options with `<>` exactly as the original pipeline used them (visible in the crash log) — e.g. `instcombine<no-verify-fixpoint>`. Only use options that actually exist for the pass: `licm` has no `<no-verify-fixpoint>` option.
 4. Insert a `print<analysis>` pass as a lighter-weight alternative to `require`: `-passes='print<aa>,licm'`.
 
 **IMPORTANT: Do NOT browse or read LLVM source code** to determine pass dependencies. The crash log from `opt-bisect-limit=-1` already contains the full pass pipeline specification with wraps and options — extract the relevant prefix from there.

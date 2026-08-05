@@ -103,7 +103,7 @@ Then binary search, same as above.
 
 The bisect log prints the last pass run before the miscompilation (e.g. `BISECT: running pass (N) GVN on ...`). Convert this to the `-passes=` form (e.g. `-passes=gvn`). Do NOT guess from filenames.
 
-**If the miscompiling pass is InstCombine, you MUST always write it as `instcombine<no-verify-fixpoint>`** — never bare `instcombine`. This applies everywhere the pass is used: bisect commands, interestingness.sh, and the `args` field in result.json. The daemon rejects result.json with `instcombine` but without `instcombine<no-verify-fixpoint>`.
+**If the miscompiling pass is InstCombine, you MUST always write it as `instcombine<no-verify-fixpoint>`** — never bare `instcombine`. This applies everywhere the pass is used: bisect commands, interestingness.sh, and the `args` field in result.json. The daemon rejects `instcombine` without `instcombine<no-verify-fixpoint>` in both extract.json and result.json args. This only constrains how instcombine is written when it is already present — it is NOT a requirement to include instcombine.
 
 Capture the IR just before the bad pass:
 ```

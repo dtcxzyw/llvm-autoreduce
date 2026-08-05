@@ -73,7 +73,7 @@
 
 Every field produced by an agent (`args`, `pipeline`, `crash_pattern`, `alive2_args`, `llubi_args`, `lli_args`, `pass_name`, `oracle`, `reference_file`, `ir_file`) is accepted verbatim. The daemon never second-guesses or overrides agent decisions — the agent's `result.json` is the single source of truth. The daemon's `verify()` step confirms that the bug still reproduces with the reported tool and arguments but does NOT re-derive the pass, oracle, or pipeline.
 
-**Single exception — mandatory pass options:** `_validate_result` enforces that `instcombine` in result.json `args` MUST be written `instcombine<no-verify-fixpoint>`. This is a structural requirement (a standalone instcombine pass must disable the fixpoint verification loop), not a semantic second-guessing of the agent's pass choice. The reducer prompt and skills document this rule.
+**Single exception — mandatory pass options:** Both `_validate_meta` (extract.json) and `_validate_result` (result.json) enforce that `instcombine` in `args` MUST be written `instcombine<no-verify-fixpoint>`. The daemon never reports a reproducer whose pipeline contains a bare instcombine pass. This is a structural requirement (a standalone instcombine pass must disable the fixpoint verification loop), not a semantic second-guessing of the agent's pass choice. It applies only when instcombine is already present in the args — it is NOT a requirement to include instcombine. The extractor/reducer prompts and skills document this rule.
 
 ### Prompt Design Rules
 
