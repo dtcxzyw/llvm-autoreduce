@@ -103,6 +103,8 @@ Then binary search, same as above.
 
 The bisect log prints the last pass run before the miscompilation (e.g. `BISECT: running pass (N) GVN on ...`). Convert this to the `-passes=` form (e.g. `-passes=gvn`). Do NOT guess from filenames.
 
+**If the miscompiling pass is InstCombine, you MUST always write it as `instcombine<no-verify-fixpoint>`** — never bare `instcombine`. This applies everywhere the pass is used: bisect commands, interestingness.sh, and the `args` field in result.json. The daemon rejects result.json with `instcombine` but without `instcombine<no-verify-fixpoint>`.
+
 Capture the IR just before the bad pass:
 ```
 opt -opt-bisect-limit=M-1 -passes='<args>' repro.ll -S > before.ll
@@ -354,7 +356,7 @@ This unrolls loops in both source and target up to N iterations.
 
 Verify the reduced IR still reproduces the miscompilation with the single pass. Write the final `result.json` (update from checkpoint if alive2 upgrade or manual reduction succeeded).
 
-**args field requirements:** After bisect isolates the bug to a single pass (or a few specific passes), `args` MUST include that pass (e.g. `-passes=gvn`). Auxiliary flags that help reproduce the bug (e.g. `-slp-threshold=-99999`) may be included alongside the pass when relevant. The `args` field MUST NOT contain `-opt-bisect-limit` (bisect is a diagnostic step, NOT stored in result.json) and MUST NOT contain `default<` (the full O1/O2/O3 pipeline — bisect already narrowed it to the specific problematic pass). **Backend/codegen passes MUST use legacy PM:** when invoking backend passes like codegenprepare with `opt`, use `-codegenprepare` (legacy syntax), never `-passes=codegenprepare` (the new pass manager does not register codegen passes).
+**args field requirements:** After bisect isolates the bug to a single pass (or a few specific passes), `args` MUST include that pass (e.g. `-passes=gvn`). Auxiliary flags that help reproduce the bug (e.g. `-slp-threshold=-99999`) may be included alongside the pass when relevant. **If the pass is instcombine, write it as `instcombine<no-verify-fixpoint>`** (e.g. `-passes=instcombine<no-verify-fixpoint>`) — the daemon rejects bare `instcombine`. The `args` field MUST NOT contain `-opt-bisect-limit` (bisect is a diagnostic step, NOT stored in result.json) and MUST NOT contain `default<` (the full O1/O2/O3 pipeline — bisect already narrowed it to the specific problematic pass). **Backend/codegen passes MUST use legacy PM:** when invoking backend passes like codegenprepare with `opt`, use `-codegenprepare` (legacy syntax), never `-passes=codegenprepare` (the new pass manager does not register codegen passes).
 
 **result.json (alive2):**
 ```json

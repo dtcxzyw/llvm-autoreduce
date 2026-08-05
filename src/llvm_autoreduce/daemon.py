@@ -488,6 +488,16 @@ def _validate_result(result):
         raise ValueError(
             f"result.json args must use legacy PM for backend passes, not -passes=: {_args!r}"
         )
+    # instcombine run in isolation MUST disable the fixpoint verification
+    # loop. Without `instcombine<no-verify-fixpoint>`, a standalone
+    # instcombine pass can hang or behave differently than in-pipeline
+    # runs (where the surrounding pipeline absorbs the fixpoint loop),
+    # producing non-reproducible reductions.
+    _args_lower = _args.lower()
+    if "instcombine" in _args_lower and "instcombine<no-verify-fixpoint>" not in _args_lower:
+        raise ValueError(
+            f"result.json args must use instcombine<no-verify-fixpoint>: {_args!r}"
+        )
 
 
 def verify_crash(result, workdir_path, pattern):

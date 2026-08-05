@@ -179,6 +179,38 @@ class TestValidateResult:
         with pytest.raises(ValueError, match="unknown type"):
             _validate_result({"ir_file": "repro.ll"})
 
+    def test_instcombine_without_no_verify_fixpoint_raises(self):
+        with pytest.raises(ValueError, match="no-verify-fixpoint"):
+            _validate_result({
+                "ir_file": "repro.ll", "type": "crash", "oracle": "opt",
+                "args": "-passes=instcombine",
+            })
+
+    def test_instcombine_with_no_verify_fixpoint_ok(self):
+        _validate_result({
+            "ir_file": "repro.ll", "type": "crash", "oracle": "opt",
+            "args": "-passes=instcombine<no-verify-fixpoint>",
+        })
+
+    def test_instcombine_in_pipeline_with_option_ok(self):
+        _validate_result({
+            "ir_file": "repro.ll", "type": "miscompilation", "oracle": "llubi",
+            "args": "-passes='instcombine<no-verify-fixpoint>,licm'",
+        })
+
+    def test_instcombine_capitalized_without_option_raises(self):
+        with pytest.raises(ValueError, match="no-verify-fixpoint"):
+            _validate_result({
+                "ir_file": "repro.ll", "type": "crash", "oracle": "opt",
+                "args": "-passes=InstCombine",
+            })
+
+    def test_non_instcombine_args_ok(self):
+        _validate_result({
+            "ir_file": "repro.ll", "type": "crash", "oracle": "opt",
+            "args": "-passes=licm",
+        })
+
 
 class TestVerifyExtractConsistency:
     def test_clean_consistency_ok(self, tmp_path):

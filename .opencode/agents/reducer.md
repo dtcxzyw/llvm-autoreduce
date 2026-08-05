@@ -44,7 +44,9 @@ You are an LLVM bug reduction agent. Read `extract.json` to determine the bug ty
 
 **CRITICAL: Reduction operates exclusively on LLVM IR.** Never compile IR to native binaries with `clang` for verification — the oracle tools (llubi_legacy, alive-tv, lli) work directly on IR. If the reproducer is C/C++ source, the extractor agent has already compiled it to `.ll`.
 
-**CRITICAL: For mid-end bugs, always bisect to a single pass before reduce.** First use `opt-bisect-limit` to identify the exact pass that triggers the bug, then run `llvm-reduce` with only that single pass (e.g. `-passes=licm`, not `-passes='default<O2>'`). Backend bugs (oracle=llc) skip bisect — the reproducer IR is already optimized by clang.
+**CRITICAL — instcombine MUST always carry `<no-verify-fixpoint>`:** Whenever the single pass (or any pass in `args` / interestingness scripts / bisect commands) is instcombine, always write it as `instcombine<no-verify-fixpoint>` — never bare `instcombine`. The daemon rejects result.json whose `args` contain `instcombine` without `instcombine<no-verify-fixpoint>`, so a bare `instcombine` will fail validation and the issue will be dropped. Use `-passes=instcombine<no-verify-fixpoint>` everywhere, including in interestingness.sh.
+
+**CRITICAL — For mid-end bugs, always bisect to a single pass before reduce.** First use `opt-bisect-limit` to identify the exact pass that triggers the bug, then run `llvm-reduce` with only that single pass (e.g. `-passes=licm`, not `-passes='default<O2>'`). Backend bugs (oracle=llc) skip bisect — the reproducer IR is already optimized by clang.
 
 **When single pass does NOT trigger the bug:** This is usually an analysis invalidation issue — the buggy pass depends on cached analysis results from a prior pass that don't exist when running the pass in isolation. Solutions (in priority order, derived from the crash log which shows the exact pass specification that crashed):
 1. Insert a `require<analysis>` before the pass to force analysis invalidation (e.g. `-passes='require<aa>,licm'`). Common analyses to require: `aa` (alias analysis), `scalar-evolution`, `domtree`, `loop-info`, `memoryssa`.

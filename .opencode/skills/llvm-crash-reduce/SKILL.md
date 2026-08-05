@@ -52,6 +52,8 @@ Look for the last line matching `BISECT: running pass (M) <PassName> on ...` bef
 
 The bisect log prints the pass name (e.g. `BISECT: running pass (N) InstCombine on ...`). Convert to the `-passes=` form (e.g. `-passes=instcombine`). Do NOT guess from filenames in crash backtraces.
 
+**If the crashing pass is InstCombine, you MUST always write it as `instcombine<no-verify-fixpoint>`** — never bare `instcombine`. This applies everywhere the pass is used: interestingness.sh, reproduction commands, and the `args` field in result.json. The daemon rejects result.json with `instcombine` but without `instcombine<no-verify-fixpoint>`.
+
 Capture the IR just before the crashing pass:
 ```
 opt -opt-bisect-limit=M-1 <args> reproducer.ll -S > before.ll
@@ -111,7 +113,7 @@ Run the single pass (opt) or llc on `reduced.ll`, confirm crash signature still 
   "ir_file": "reduced.ll"
 }
 ```
-The `args` for opt MUST be the single pass (e.g. `-passes=licm`), not a full pipeline containing `default<`. Auxiliary flags that help reproduce the bug (e.g. `-slp-threshold=-99999`, `-verify-scev`) may be included alongside the pass when relevant. Never include `-opt-bisect-limit` in args — bisect is for finding the pass only; llvm-reduce uses the single pass found by bisect. **Backend/codegen passes MUST use legacy PM:** when invoking backend passes like codegenprepare with `opt`, use `-codegenprepare` (legacy syntax), never `-passes=codegenprepare` (the new pass manager does not register codegen passes).
+The `args` for opt MUST be the single pass (e.g. `-passes=licm`), not a full pipeline containing `default<`. Auxiliary flags that help reproduce the bug (e.g. `-slp-threshold=-99999`, `-verify-scev`) may be included alongside the pass when relevant. **If the single pass is instcombine, write it as `instcombine<no-verify-fixpoint>`** (e.g. `-passes=instcombine<no-verify-fixpoint>`) — the daemon rejects bare `instcombine`. Never include `-opt-bisect-limit` in args — bisect is for finding the pass only; llvm-reduce uses the single pass found by bisect. **Backend/codegen passes MUST use legacy PM:** when invoking backend passes like codegenprepare with `opt`, use `-codegenprepare` (legacy syntax), never `-passes=codegenprepare` (the new pass manager does not register codegen passes).
 
 **result.json for llc crash:**
 ```json
