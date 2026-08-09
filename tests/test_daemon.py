@@ -3,6 +3,7 @@
 import pytest
 
 from llvm_autoreduce.daemon import (
+    _pick_bisect_sha,
     _validate_meta,
     _validate_result,
     _validate_verdict,
@@ -279,3 +280,54 @@ class TestVerifyExtractConsistency:
         meta = {"type": "miscompilation"}
         result = {"type": "miscompilation", "oracle": "alive2"}
         assert verify_extract_consistency(meta, result, tmp_path) is True
+
+
+class TestPickBisectSha:
+    VERSIONS = {"a" * 40: 24, "b" * 40: 23}
+
+    @staticmethod
+    def _bot_comment(body):
+        return {"user": {"login": "github-actions[bot]"}, "body": body}
+
+    def _version_fn(self, sha):
+        return self.VERSIONS.get(sha)
+
+    def test_prefers_first_bad_commit(self):
+        comments = [self._bot_comment(
+            f"{'a'*40} is the first bad commit\n"
+            f"commit {'a'*40}\n"
+            f"Bad commit: {'a'*40} Good commit: {'b'*40}"
+        )]
+        assert _pick_bisect_sha(comments, self._version_fn) == ("a" * 40, 24)
+
+    def test_falls_back_when_first_sha_missing_from_tree(self):
+        comments = [self._bot_comment(
+            f"{'c'*40} is the first bad commit\n"
+            f"Bad commit: {'c'*40} Good commit: {'b'*40}"
+        )]
+        assert _pick_bisect_sha(comments, self._version_fn) == ("b" * 40, 23)
+
+    def test_returns_none_when_nothing_computable(self):
+        comments = [self._bot_comment(f"{'c'*40} is the first bad commit")]
+        assert _pick_bisect_sha(comments, self._version_fn) == (None, None)
+
+    def test_ignores_non_bot_comments(self):
+        comments = [
+            {"user": {"login": "someuser"}, "body": f"{'b'*40} whatever"},
+            self._bot_comment(f"{'a'*40} is the first bad commit"),
+        ]
+        assert _pick_bisect_sha(comments, self._version_fn) == ("a" * 40, 24)
+
+    def test_skips_duplicate_sha(self):
+        calls = []
+
+        def version_fn(sha):
+            calls.append(sha)
+            return None
+
+        comments = [self._bot_comment(
+            f"{'c'*40} is the first bad commit\n"
+            f"Bad commit: {'c'*40} Good commit: {'c'*40}"
+        )]
+        assert _pick_bisect_sha(comments, version_fn) == (None, None)
+        assert calls.count("c" * 40) == 1

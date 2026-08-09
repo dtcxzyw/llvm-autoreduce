@@ -1796,6 +1796,30 @@ def _determine_regression_version(commit_sha):
     return version
 
 
+def _pick_bisect_sha(comments, version_fn):
+    """Return the first (sha, version) computable from bisect service comments.
+
+    The comment body ends with "Bad commit: X Good commit: Y", so the first
+    SHA is the first bad commit and the last is the good commit. The bad
+    commit is the correct basis for the regression version, but it may be
+    absent from the local LLVM tree (e.g. newer than the last fetch) and
+    fail to compute a version; later SHAs are tried as fallback.
+    """
+    tried = set()
+    for comment in comments:
+        if (comment.get("user", {}).get("login") or "").startswith("github-actions"):
+            body = comment.get("body", "")
+            for sha_match in re.finditer(r"\b([0-9a-f]{40})\b", body):
+                commit_sha = sha_match.group(1)
+                if commit_sha in tried:
+                    continue
+                tried.add(commit_sha)
+                version = version_fn(commit_sha)
+                if version:
+                    return commit_sha, version
+    return None, None
+
+
 def _check_bisect_result(llvm_issue_id):
     state = _bisect_tracker.get(llvm_issue_id)
     if state is None:
@@ -1804,20 +1828,13 @@ def _check_bisect_result(llvm_issue_id):
     state["attempts"] += 1
     try:
         comments = github.get_bisect_issue_comments(bisect_issue_number)
-        commit_sha = None
-        for comment in comments:
-            if (comment.get("user", {}).get("login") or "").startswith("github-actions"):
-                body = comment.get("body", "")
-                for sha_match in re.finditer(r"\b([0-9a-f]{40})\b", body):
-                    commit_sha = sha_match.group(1)
-        if commit_sha:
+        commit_sha, version = _pick_bisect_sha(comments, _determine_regression_version)
+        if version:
             log.info("issue=%d bisect found SHA: %s", llvm_issue_id, commit_sha)
-            version = _determine_regression_version(commit_sha)
-            if version:
-                label = f"regression:{version}"
-                github.add_labels_to_issue(llvm_issue_id, [label])
-                log.info("issue=%d labeled %s", llvm_issue_id, label)
-                github.add_issue_to_project(llvm_issue_id)
+            label = f"regression:{version}"
+            github.add_labels_to_issue(llvm_issue_id, [label])
+            log.info("issue=%d labeled %s", llvm_issue_id, label)
+            github.add_issue_to_project(llvm_issue_id)
             _bisect_tracker.pop(llvm_issue_id, None)
             return
     except Exception:
