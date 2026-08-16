@@ -1681,7 +1681,7 @@ def reprocess_issue(issue):
         if "loop-vectorize" in reducer_args:
             labels.add("vectorizers")
     existing = github.get_issue_labels(issue_id)
-    for label in ("crash", "new issue"):
+    for label in ("crash", "new issue", "clang"):
         if label in existing:
             github.remove_label_from_issue(issue_id, label)
     github.add_labels_to_issue(issue_id, labels)
