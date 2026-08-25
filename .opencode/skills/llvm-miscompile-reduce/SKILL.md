@@ -47,7 +47,7 @@ timeout 60 llubi --max-steps 1000000 repro.ll > ref_ubi
 timeout 10 lli <args> repro.ll > _lli_out
 ! diff -q ref_ubi _lli_out
 ```
-**ACCEPTED RISK:** Crashes in the pipeline (opt, llubi, or lli segfault) are treated as miscompilation: `pipefail` makes the pipeline exit non-zero on crash, `!` inverts that to exit 0 ("miscompilation found"). The daemon's final `verify()` step independently checks the reduced IR and will reject cases where the miscompilation does not actually reproduce, so a crash-confused reduction is caught at verification time.
+**ACCEPTED RISK:** Crashes in the pipeline (opt, llubi, or lli segfault) are treated as miscompilation: `pipefail` makes the pipeline exit non-zero on crash, `!` inverts that to exit 0 ("miscompilation found"). The daemon's final `verify()` step independently checks the reduced IR and will reject cases where the miscompilation does not actually reproduce, so a crash-confused reduction is caught at verification time. **llubi unsupported-instruction failures are NOT miscompilations:** llubi exits non-zero with `Unrecognized instruction` on stderr for instructions/intrinsics it does not implement (e.g. target-specific intrinsics). The nonzero_exit templates below reject such candidates via `grep -q 'Unrecognized instruction' _err.txt && exit 1` — do NOT remove that guard. If the ORIGINAL reproducer fails this way, llubi cannot handle the IR: remove the unsupported construct from the IR (or reject the issue) instead of treating it as a bug.
 
 ### 3. opt-bisect-limit binary search to find single pass
 
@@ -149,8 +149,10 @@ if grep -qP 'declare.*@llvm\.(x86|aarch64|arm|nvptx|amdgcn)\.' "$1"; then
   grep -q 'target-features' "$1" || exit 1
 fi
 timeout 120 llubi --max-steps 1000000 "$1" > _ref.txt || exit 1
-timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 llubi --max-steps 1000000 -
+timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 llubi --max-steps 1000000 - > _out.txt 2> _err.txt
 ret=$?
+# Reject IR that llubi cannot interpret (unsupported instruction/intrinsic) — NOT a miscompilation
+grep -q 'Unrecognized instruction' _err.txt && exit 1
 # Exit 0 (interesting) if pipeline failed with crash/signal/assert — NOT timeout (124)
 test $ret -ne 0 -a $ret -ne 124
 SCRIPT

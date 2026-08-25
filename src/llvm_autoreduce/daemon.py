@@ -568,6 +568,20 @@ def verify_crash(result, workdir_path, pattern):
 # (non-zero pipeline exit inverted to 0 by `!`). The verify step here
 # independently runs the oracle and checks returncode, catching
 # crash-confused reductions produced by the skill's scripts.
+#
+# llubi exits non-zero with "Unrecognized instruction" on stderr for any
+# instruction or intrinsic it does not implement (e.g. target-specific
+# intrinsics). Such failures are a tool limitation, NOT a miscompilation —
+# they are excluded from the nonzero_exit confirmation below to prevent
+# false positives and wrong reductions.
+_LLUBI_UNSUPPORTED_MARKER = "Unrecognized instruction"
+
+
+def _llubi_failed_unsupported(stderr):
+    """True if the llubi stderr indicates an unsupported instruction/intrinsic."""
+    return _LLUBI_UNSUPPORTED_MARKER in stderr
+
+
 def verify_llubi(result, workdir_path, pattern=""):
     safe_ir = _safe_relative(workdir_path, result["ir_file"])
     if not _verify_ir_valid(result["ir_file"], workdir_path):
@@ -587,7 +601,10 @@ def verify_llubi(result, workdir_path, pattern=""):
             cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
         )
         if ref.returncode != 0:
-            log.error("llubi ref failed: %s", ref.stderr[:200])
+            if _llubi_failed_unsupported(ref.stderr):
+                log.error("llubi ref: IR contains instructions llubi cannot interpret")
+            else:
+                log.error("llubi ref failed: %s", ref.stderr[:200])
             return False
 
         # ACCEPTED RISK (R18): -S flag is placed after the input IR file
@@ -638,6 +655,11 @@ def verify_llubi(result, workdir_path, pattern=""):
             return stdout_diff
         if pattern == "nonzero_exit":
             if test_crashed:
+                if _llubi_failed_unsupported(test.stderr):
+                    # llubi cannot interpret an instruction/intrinsic in the
+                    # transformed IR — a tool limitation, not a miscompilation.
+                    log.error("llubi test failed: unsupported instruction/intrinsic in transformed IR")
+                    return False
                 log.info("llubi test crashed (signal=%d) — confirmed nonzero_exit",
                          -test.returncode if test.returncode < 0 else test.returncode)
                 return True

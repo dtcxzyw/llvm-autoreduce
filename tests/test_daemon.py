@@ -1,8 +1,13 @@
 """Tests for daemon validation functions."""
 
+import subprocess
+
 import pytest
 
+import llvm_autoreduce.daemon as daemon
+from llvm_autoreduce import config
 from llvm_autoreduce.daemon import (
+    _llubi_failed_unsupported,
     _pick_bisect_sha,
     _validate_meta,
     _validate_result,
@@ -331,3 +336,82 @@ class TestPickBisectSha:
         )]
         assert _pick_bisect_sha(comments, version_fn) == (None, None)
         assert calls.count("c" * 40) == 1
+
+
+class TestLlubiFailedUnsupported:
+    def test_unsupported_marker_detected(self):
+        stderr = (
+            "Unrecognized instruction:   %m = call ptr @llvm.ptrmask.p0.i64(ptr %p, i64 8)\n"
+            "error: Execution of function 'main' failed.\n"
+        )
+        assert _llubi_failed_unsupported(stderr) is True
+
+    def test_generic_failure_not_unsupported(self):
+        assert _llubi_failed_unsupported(
+            "error: Execution of function 'main' failed.\n"
+        ) is False
+
+    def test_empty_stderr_not_unsupported(self):
+        assert _llubi_failed_unsupported("") is False
+
+
+class TestVerifyLlubiUnsupported:
+    """verify_llubi must not confirm nonzero_exit for llubi tool limitations."""
+
+    IR_UNSUPPORTED = (
+        'target triple = "x86_64-unknown-linux-gnu"\n'
+        "define i32 @main() {\n"
+        "entry:\n"
+        "  %p = alloca i32\n"
+        "  %m = call ptr @llvm.ptrmask(ptr %p, i64 8)\n"
+        "  %v = load i32, ptr %m\n"
+        "  ret i32 %v\n"
+        "}\n"
+        "declare ptr @llvm.ptrmask(ptr, i64)\n"
+    )
+
+    @pytest.fixture(autouse=True)
+    def _require_toolchain(self):
+        if not config.LLUBI_BIN.exists() or not (config.LLVM_BIN / "opt").exists():
+            pytest.skip("llubi/opt toolchain not built")
+        yield
+
+    def test_ref_unsupported_instruction_rejected(self, tmp_path):
+        (tmp_path / "repro.ll").write_text(self.IR_UNSUPPORTED)
+        result = {"ir_file": "repro.ll", "args": ""}
+        assert daemon.verify_llubi(result, tmp_path, pattern="nonzero_exit") is False
+
+    def test_nonzero_exit_unsupported_rejected(self, tmp_path, monkeypatch):
+        (tmp_path / "repro.ll").write_text("define i32 @main() { ret i32 0 }")
+        result = {"ir_file": "repro.ll", "args": ""}
+        real = daemon._run_process
+
+        def fake(cmd, **kwargs):
+            p = real(cmd, **kwargs)
+            if "__transformed.ll" in cmd:
+                return subprocess.CompletedProcess(
+                    cmd, 1, stdout="",
+                    stderr="Unrecognized instruction: call void @llvm.ptrmask()\n"
+                           "error: Execution of function 'main' failed.\n",
+                )
+            return p
+
+        monkeypatch.setattr(daemon, "_run_process", fake)
+        assert daemon.verify_llubi(result, tmp_path, pattern="nonzero_exit") is False
+
+    def test_nonzero_exit_real_failure_confirmed(self, tmp_path, monkeypatch):
+        (tmp_path / "repro.ll").write_text("define i32 @main() { ret i32 0 }")
+        result = {"ir_file": "repro.ll", "args": ""}
+        real = daemon._run_process
+
+        def fake(cmd, **kwargs):
+            p = real(cmd, **kwargs)
+            if "__transformed.ll" in cmd:
+                return subprocess.CompletedProcess(
+                    cmd, 1, stdout="",
+                    stderr="Immediate UB detected: Memory access is out of bounds.\n",
+                )
+            return p
+
+        monkeypatch.setattr(daemon, "_run_process", fake)
+        assert daemon.verify_llubi(result, tmp_path, pattern="nonzero_exit") is True

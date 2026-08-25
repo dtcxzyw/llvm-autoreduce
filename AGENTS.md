@@ -95,6 +95,13 @@ When writing agent definitions, prompts, and skill files, follow these rules:
 
 `llubi` (reference interpreter) and `lli` (JIT backend) produce identical stdout for correct IR when the backend has no bug. However, if the IR's `main()` function uses `argc`/`argv`, the two tools may produce different output even on correct backends because `llubi` passes its own command-line arguments to `main()` (argv[0] = the input file name) and fills non-standard main signatures with null values. Before using the `lli` oracle, the reducer agent MUST preprocess the IR to remove `main()` argument dependencies — either by stripping `argc`/`argv` usage from the IR or by confirming the IR does not use command-line arguments.
 
+### llubi Unsupported Instructions / Intrinsics
+
+`llubi` does not implement every instruction and intrinsic. Any instruction it cannot interpret causes it to exit non-zero with `Unrecognized instruction` on stderr (all such paths funnel through `onUnrecognizedInstruction` + `setFailed()` in `llvm/tools/llubi`). Such failures are a tool limitation, NOT a miscompilation — reporting them as `nonzero_exit` miscompilations is a false positive. The extractor, reducer, and daemon MUST therefore:
+- treat any llubi run whose stderr contains `Unrecognized instruction` as "llubi cannot handle this IR", never as a bug (extractor: classify `unrelated` unless the unsupported construct can be removed while preserving the bug);
+- exclude such failures from the daemon's `verify_llubi` `nonzero_exit` confirmation (`_llubi_failed_unsupported` → reject);
+- keep the `grep -q 'Unrecognized instruction' _err.txt && exit 1` guard in the nonzero_exit interestingness template so llvm-reduce never reduces toward an unsupported-instruction failure.
+
 ### Always Generate IR First
 
 Reduction operates exclusively on LLVM IR. Never use `clang` to compile C/C++ reproducers to native binaries for verification — the oracle tools (llubi, alive-tv, lli) work directly on IR. If a reproducer is C/C++ source, the extractor agent compiles it to `.ll` once; all subsequent pipeline stages work with the `.ll` file.
