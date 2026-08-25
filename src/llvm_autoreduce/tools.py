@@ -17,13 +17,11 @@ UPDATE_SCRIPT = PROJECT_ROOT / "scripts" / "update-tools.sh"
 CLONE_TARGETS = [
     ("https://github.com/llvm/llvm-project", WORK_DIR / "llvm-trunk"),
     ("https://github.com/AliveToolkit/alive2", WORK_DIR / "alive2-trunk"),
-    ("https://github.com/dtcxzyw/llvm-ub-aware-interpreter", WORK_DIR / "llubi-trunk"),
 ]
 
 FETCH_TARGETS = [
     (WORK_DIR / "llvm-trunk", "origin", "main"),
     (WORK_DIR / "alive2-trunk", "origin", "master"),
-    (WORK_DIR / "llubi-trunk", "origin", "main"),
 ]
 
 GIT_RETRY = {

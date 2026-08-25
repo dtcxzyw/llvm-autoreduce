@@ -83,7 +83,7 @@ When writing agent definitions, prompts, and skill files, follow these rules:
 
 2. **Extractor — reproduce first, never trust issue text alone.** The extractor MUST run the toolchain to reproduce the bug before extracting metadata. Stack traces and crash output in the issue body are reference hints only — the crash_pattern field MUST come from actual toolchain output reproduced in the workdir. This validates the reproducer is functional before the reducer spends time on it.
 
-3. **Skills — timeouts on every toolchain command.** Every direct invocation of `opt`, `llc`, `llubi_legacy`, `alive-tv`, `lli`, or `clang` outside of `interestingness.sh` MUST include a `timeout` wrapper. Default `--max-steps 1000000` is sufficient for llubi_legacy — report timeouts as potential infinite loops. `interestingness.sh` commands already carry timeouts but standalone reproduction/bisect commands must also be protected.
+3. **Skills — timeouts on every toolchain command.** Every direct invocation of `opt`, `llc`, `llubi`, `alive-tv`, `lli`, or `clang` outside of `interestingness.sh` MUST include a `timeout` wrapper. Default `--max-steps 1000000` is sufficient for llubi — report timeouts as potential infinite loops. `interestingness.sh` commands already carry timeouts but standalone reproduction/bisect commands must also be protected.
 
 4. **Pass name conversion — agent domain knowledge.** Agents know that `opt-bisect-limit` outputs pass names in CamelCase (e.g. `InstCombine`) and that `-passes=` accepts kebab-case (e.g. `instcombine`). Do not explain this conversion — provide at most a single example as hint. The agent understands LLVM's pass naming conventions.
 
@@ -91,13 +91,13 @@ When writing agent definitions, prompts, and skill files, follow these rules:
 
 6. **Always provide full JSON schema in prompts.** Every prompt that asks an agent to produce JSON MUST include the complete schema with all required fields for every supported bug type. Agents are experts at content but need the exact field names and structure the daemon expects.
 
-### llubi_legacy / lli Equivalence
+### llubi / lli Equivalence
 
-`llubi_legacy` (reference interpreter) and `lli` (JIT backend) produce identical stdout for correct IR when the backend has no bug. However, if the IR's `main()` function uses `argc`/`argv`, the two tools may produce different output even on correct backends because `llubi_legacy` does not pass command-line arguments. Before using the `lli` oracle, the reducer agent MUST preprocess the IR to remove `main()` argument dependencies — either by stripping `argc`/`argv` usage from the IR or by confirming the IR does not use command-line arguments.
+`llubi` (reference interpreter) and `lli` (JIT backend) produce identical stdout for correct IR when the backend has no bug. However, if the IR's `main()` function uses `argc`/`argv`, the two tools may produce different output even on correct backends because `llubi` passes its own command-line arguments to `main()` (argv[0] = the input file name) and fills non-standard main signatures with null values. Before using the `lli` oracle, the reducer agent MUST preprocess the IR to remove `main()` argument dependencies — either by stripping `argc`/`argv` usage from the IR or by confirming the IR does not use command-line arguments.
 
 ### Always Generate IR First
 
-Reduction operates exclusively on LLVM IR. Never use `clang` to compile C/C++ reproducers to native binaries for verification — the oracle tools (llubi_legacy, alive-tv, lli) work directly on IR. If a reproducer is C/C++ source, the extractor agent compiles it to `.ll` once; all subsequent pipeline stages work with the `.ll` file.
+Reduction operates exclusively on LLVM IR. Never use `clang` to compile C/C++ reproducers to native binaries for verification — the oracle tools (llubi, alive-tv, lli) work directly on IR. If a reproducer is C/C++ source, the extractor agent compiles it to `.ll` once; all subsequent pipeline stages work with the `.ll` file.
 
 ### Bisect to Single Pass Before Reduce
 
@@ -116,4 +116,4 @@ The daemon supports four bug categories across two stages (extract → reduce):
 
 ### Interestingness Script Timeouts
 
-Every subprocess inside `interestingness.sh` (opt, llubi_legacy, alive-tv, lli, llc) MUST include a timeout via the `timeout` command to prevent a single hanging candidate from consuming the entire reduction time budget.
+Every subprocess inside `interestingness.sh` (opt, llubi, alive-tv, lli, llc) MUST include a timeout via the `timeout` command to prevent a single hanging candidate from consuming the entire reduction time budget.

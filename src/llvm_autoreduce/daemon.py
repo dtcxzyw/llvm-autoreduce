@@ -184,7 +184,7 @@ def _check_toolchain():
     # intervention regardless.
     for name, oracle_path in (
         ("alive-tv", config.ALIVE2_BIN),
-        ("llubi_legacy", config.LLUBI_BIN),
+        ("llubi", config.LLUBI_BIN),
     ):
         ok, detail = _check_binary(oracle_path, name)
         if not ok:
@@ -577,7 +577,7 @@ def verify_llubi(result, workdir_path, pattern=""):
         return False
     args = result.get("args", "")
     # llubi_args is produced by the reducer agent (trusted oracle).
-    llubi_args = result.get("llubi_args", "--reduce-mode --max-steps 1000000")
+    llubi_args = result.get("llubi_args", "--max-steps 1000000")
     # Use the built LLVM toolchain opt binary, never PATH.
     opt_path = str(config.LLVM_BIN / "opt")
     try:
@@ -766,7 +766,7 @@ def verify_alive2(result, workdir_path):
         return False
 
 
-# verify_lli compares stdout from llubi_legacy (reference interpreter)
+# verify_lli compares stdout from llubi (reference interpreter)
 # and lli (JIT/backend-native execution) to detect backend miscompilation.
 # The reducer agent preprocesses the IR to remove main() argument
 # dependencies before using the lli oracle, so the two tools produce
@@ -784,7 +784,7 @@ def verify_lli(result, workdir_path, pattern=""):
     args = result.get("args", "")
     # lli_args and llubi_args are produced by the reducer agent (trusted oracle).
     lli_args = result.get("lli_args", "")
-    llubi_args = result.get("llubi_args", "--reduce-mode --max-steps 1000000")
+    llubi_args = result.get("llubi_args", "--max-steps 1000000")
     opt_path = str(config.LLVM_BIN / "opt")
     lli_path = str(config.LLVM_BIN / "lli")
     try:
@@ -848,7 +848,7 @@ def verify_lli(result, workdir_path, pattern=""):
 
 # The daemon trusts the oracle choice made by the reducer agent inside
 # result.json. It does not independently select or fallback between
-# llubi_legacy and alive-tv — the reducer agent has full context about
+# llubi and alive-tv — the reducer agent has full context about
 # which oracle succeeded during its opt-bisect-limit binary search.
 # ACCEPTED RISK (F57): verify() and _validate_result() use separate
 # if-else chains for oracle dispatch. If a new oracle is added to
@@ -932,8 +932,9 @@ _BACKEND_PASS_IN_NEW_PM_RE = re.compile(r"-passes=.*\bcodegenprepare\b", re.IGNO
 def _check_main_no_params(reproducer_file, workdir_path):
     """Verify that main() has no parameters (required for backend miscompilation).
 
-    llubi_legacy and lli produce different output when main() uses argc/argv
-    because llubi_legacy does not pass command-line arguments. Backend
+    llubi and lli produce different output when main() uses argc/argv
+    because llubi passes only the input file name as argv while lli
+    passes "lli" as argv[0]. Backend
     miscompilation reproducers MUST have `i32 @main()` with empty params.
     """
     safe_ir = _safe_relative(workdir_path, reproducer_file)
@@ -1040,7 +1041,7 @@ def verify_extract(meta, workdir_path):
             log.warning("verify_extract: miscomp reproducer contains undef")
             return False
         # Backend miscompilation requires main() with no parameters —
-        # llubi_legacy and lli disagree on argc/argv.
+        # llubi and lli disagree on argc/argv.
         if oracle == "llc":
             if not _check_main_no_params(reproducer, workdir_path):
                 log.warning("verify_extract: backend miscomp reproducer main() has params")
@@ -1053,10 +1054,10 @@ def verify_extract(meta, workdir_path):
             "args": args,
         }
         if oracle == "opt":
-            result["llubi_args"] = "--reduce-mode --max-steps 1000000"
+            result["llubi_args"] = "--max-steps 1000000"
             return verify_llubi(result, workdir_path, pattern)
         if oracle == "llc":
-            result["llubi_args"] = "--reduce-mode --max-steps 1000000"
+            result["llubi_args"] = "--max-steps 1000000"
             result["lli_args"] = ""
             return verify_lli(result, workdir_path, pattern)
         log.error("verify_extract: miscompilation with unknown oracle=%r", oracle)
@@ -1220,7 +1221,7 @@ def _generate_report(meta, result, workdir_path, issue_id, timing=None):
     lines.append("")
     lines.append("## Toolchain")
     lines.append("")
-    for name, repo in (("llvm", config.LLVM_TRUNK), ("alive2", config.ALIVE2_TRUNK), ("llubi", config.LLUBI_TRUNK)):
+    for name, repo in (("llvm", config.LLVM_TRUNK), ("alive2", config.ALIVE2_TRUNK)):
         sha = subprocess.run(
             ["git", "-C", str(repo), "rev-parse", "HEAD"],
             capture_output=True, text=True, timeout=10,
@@ -1297,21 +1298,21 @@ def _generate_report(meta, result, workdir_path, issue_id, timing=None):
             lines.append(f"opt {args} {ir_file} -S > __reduced_opt.ll && alive-tv --disable-undef-input {alive2_args} {ir_file} __reduced_opt.ll")
             lines.append("```")
         elif oracle == "llubi":
-            llubi_args = result.get("llubi_args", "--reduce-mode --max-steps 1000000")
+            llubi_args = result.get("llubi_args", "--max-steps 1000000")
             lines.append("```bash")
             lines.append("# Reference:")
-            lines.append(f"llubi_legacy {llubi_args} {ir_file}")
+            lines.append(f"llubi {llubi_args} {ir_file}")
             lines.append("# Transformed (incorrect):")
-            lines.append(f"opt {args} {ir_file} -S > __reduced_opt.ll && llubi_legacy {llubi_args} __reduced_opt.ll")
+            lines.append(f"opt {args} {ir_file} -S > __reduced_opt.ll && llubi {llubi_args} __reduced_opt.ll")
             lines.append("```")
         elif oracle == "lli":
             lli_args = result.get("lli_args", "")
-            llubi_args = result.get("llubi_args", "--reduce-mode --max-steps 1000000")
+            llubi_args = result.get("llubi_args", "--max-steps 1000000")
             lli_cmd = f"lli {lli_args} {ir_file}".strip()
             lli_cmd = " ".join(lli_cmd.split())
             lines.append("```bash")
             lines.append("# Reference:")
-            lines.append(f"llubi_legacy {llubi_args} {ir_file}")
+            lines.append(f"llubi {llubi_args} {ir_file}")
             lines.append("# Transformed (incorrect, via backend):")
             lines.append(lli_cmd)
             lines.append("```")
@@ -1862,7 +1863,7 @@ def main():
 
     # Verify required binaries exist before entering the poll loop.
     # LLVM tools are checked against the self-maintained trunk build at
-    # config.LLVM_BIN (never PATH). Oracle binaries (alive-tv, llubi_legacy)
+    # config.LLVM_BIN (never PATH). Oracle binaries (alive-tv, llubi)
     # are built by tools.update_all() in the first loop iteration and
     # verified by _check_toolchain() on build errors / timeouts.
     missing = []
@@ -1881,7 +1882,7 @@ def main():
             log.warning("%s at %s: %s on --version", binary, config.LLVM_BIN / binary, detail)
     for oracle_name, oracle_path in (
         ("alive-tv", config.ALIVE2_BIN),
-        ("llubi_legacy", config.LLUBI_BIN),
+        ("llubi", config.LLUBI_BIN),
     ):
         ok, detail = _check_binary(oracle_path, oracle_name)
         if ok:

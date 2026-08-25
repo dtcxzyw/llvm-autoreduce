@@ -8,11 +8,11 @@ WORK_ROOT = PROJECT_ROOT / "work"
 
 LLVM_TRUNK = WORK_ROOT / "llvm-trunk"
 ALIVE2_TRUNK = WORK_ROOT / "alive2-trunk"
-LLUBI_TRUNK = WORK_ROOT / "llubi-trunk"
 
 LLVM_BIN = LLVM_TRUNK / "build" / "bin"
 ALIVE2_BIN = ALIVE2_TRUNK / "build" / "alive-tv"
-LLUBI_BIN = LLUBI_TRUNK / "build" / "llubi_legacy"
+# llubi is built as an LLVM tool (llvm/tools/llubi) by update-tools.sh.
+LLUBI_BIN = LLVM_BIN / "llubi"
 
 KNOWN_GOOD = WORK_ROOT / ".known-good"
 PROCESSED = WORK_ROOT / "processed.txt"

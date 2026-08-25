@@ -14,7 +14,7 @@ Automated LLVM bug reproducer reduction tool. Watches the [llvm/llvm-project](ht
 
 ## Setup
 
-Requires Python 3.12+, an LLVM source tree with `opt`/`llc`/`lli`/`llvm-reduce`/`clang` built, and optionally [Alive2](https://github.com/AliveToolkit/alive2) and [llubi](https://github.com/dtcxzyw/llvm-ub-aware-interpreter) for miscompilation verification.
+Requires Python 3.12+, an LLVM source tree with `opt`/`llc`/`lli`/`llvm-reduce`/`clang`/`llubi` built, and optionally [Alive2](https://github.com/AliveToolkit/alive2) for miscompilation verification. `llubi` is built as an LLVM tool (`llvm/tools/llubi`).
 
 ```bash
 uv sync
@@ -29,7 +29,7 @@ uv pip install -e .
 
 ### Toolchain
 
-Run `scripts/update-tools.sh` to clone and build LLVM, Alive2, and LLUBI from source into `work/`.
+Run `scripts/update-tools.sh` to clone and build LLVM (including `llubi`) and Alive2 from source into `work/`.
 
 ## Usage
 

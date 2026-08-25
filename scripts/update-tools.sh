@@ -36,7 +36,7 @@ checkout_and_build_llvm() {
         -DLLVM_ENABLE_RTTI=ON \
         -DLLVM_ENABLE_EH=ON \
         -DLLVM_ENABLE_ZSTD=OFF
-    cmake --build "$WORK_DIR/llvm-trunk/build" --target opt llc lli llvm-reduce clang -j 16
+    cmake --build "$WORK_DIR/llvm-trunk/build" --target opt llc lli llvm-reduce clang llubi -j 16
 }
 
 checkout_and_build_alive2() {
@@ -49,17 +49,6 @@ checkout_and_build_alive2() {
         -DLLVM_DIR="$WORK_DIR/llvm-trunk/build/lib/cmake/llvm" \
         -DBUILD_TV=ON
     cmake --build "$WORK_DIR/alive2-trunk/build" --target alive-tv
-}
-
-checkout_and_build_llubi() {
-    local hash="$1"
-    git -C "$WORK_DIR/llubi-trunk" checkout "$hash"
-    cmake -B "$WORK_DIR/llubi-trunk/build" \
-        -S "$WORK_DIR/llubi-trunk" \
-        -G Ninja \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DLLVM_DIR="$WORK_DIR/llvm-trunk/build/lib/cmake/llvm"
-    cmake --build "$WORK_DIR/llubi-trunk/build" --target llubi_legacy
 }
 
 # ---- per-component rollback helpers ----
@@ -78,13 +67,6 @@ rollback_alive2() {
     checkout_and_build_alive2 "$hash" || echo "WARN: alive2 rollback build failed"
 }
 
-rollback_llubi() {
-    echo "ROLLBACK: restoring known-good llubi"
-    local hash
-    hash=$(jq -r '.llubi' "$KNOWN_GOOD_FILE")
-    checkout_and_build_llubi "$hash" || echo "WARN: llubi rollback build failed"
-}
-
 update_known_hash() {
     local component="$1" hash="$2"
     if [ -f "$KNOWN_GOOD_FILE" ]; then
@@ -101,15 +83,13 @@ update_known_hash() {
 build_all() {
     checkout_and_build_llvm "$LLVM_LATEST" || { echo "FAIL: LLVM build"; exit 1; }
     checkout_and_build_alive2 "$ALIVE2_LATEST" || { echo "FAIL: alive2 build"; exit 1; }
-    checkout_and_build_llubi "$LLUBI_LATEST" || { echo "FAIL: llubi build"; exit 1; }
 }
 
 record_known_good() {
     cat > "$KNOWN_GOOD_FILE" <<JSONEOF
 {
   "llvm": "$LLVM_LATEST",
-  "alive2": "$ALIVE2_LATEST",
-  "llubi": "$LLUBI_LATEST"
+  "alive2": "$ALIVE2_LATEST"
 }
 JSONEOF
 }
@@ -119,8 +99,8 @@ JSONEOF
 # latest origin/main (or origin/master) HEAD. There is no commit hash
 # pinning, GPG signature verification, or version-lock mechanism. The
 # .known-good file stores hashes only for local rollback on build failure,
-# not as a trust anchor. If any upstream repository (llvm-project, alive2,
-# llvm-ub-aware-interpreter) is compromised, malicious code enters the
+# not as a trust anchor. If any upstream repository (llvm-project, alive2)
+# is compromised, malicious code enters the
 # toolchain and is executed by both the daemon's subprocess calls and the
 # AI agents' unrestricted bash access. The dockerized runtime and operator
 # trust in upstream maintainers are the sole mitigations. This is the
@@ -137,11 +117,6 @@ if ! $SKIP_GIT; then
         git clone https://github.com/AliveToolkit/alive2 "$WORK_DIR/alive2-trunk"
     fi
 
-    if [ ! -d "$WORK_DIR/llubi-trunk/.git" ]; then
-        echo "CLONE: llvm-ub-aware-interpreter"
-        git clone https://github.com/dtcxzyw/llvm-ub-aware-interpreter "$WORK_DIR/llubi-trunk"
-    fi
-
     # ---- fetch latest ----
     # NOTE: branch names are hardcoded (main/master). If an upstream repo
     # renames its default branch, the clone+fetch logic must be updated here
@@ -149,7 +124,6 @@ if ! $SKIP_GIT; then
 
     git -C "$WORK_DIR/llvm-trunk" fetch origin main
     git -C "$WORK_DIR/alive2-trunk" fetch origin master
-    git -C "$WORK_DIR/llubi-trunk" fetch origin main
 fi
 
 # ---- detect state ----
@@ -158,8 +132,6 @@ LLVM_CURRENT=$(get_hash "$WORK_DIR/llvm-trunk")
 LLVM_LATEST=$(git -C "$WORK_DIR/llvm-trunk" rev-parse origin/main)
 ALIVE2_CURRENT=$(get_hash "$WORK_DIR/alive2-trunk")
 ALIVE2_LATEST=$(git -C "$WORK_DIR/alive2-trunk" rev-parse origin/master)
-LLUBI_CURRENT=$(get_hash "$WORK_DIR/llubi-trunk")
-LLUBI_LATEST=$(git -C "$WORK_DIR/llubi-trunk" rev-parse origin/main)
 
 FIRST_BUILD=false
 if [ ! -f "$KNOWN_GOOD_FILE" ]; then
@@ -179,14 +151,13 @@ if [ "$FIRST_BUILD" = true ]; then
     exit 0
 fi
 
-# ---- attempt incremental update (all-or-nothing triple rollback) ----
+# ---- attempt incremental update (all-or-nothing pair rollback) ----
 # Build all changed components. If any build fails, roll back the entire
-# triple (LLVM, alive2, llubi) to the last known-good release to preserve
+# pair (LLVM, alive2) to the last known-good release to preserve
 # ABI compatibility across the toolchain.
 
 NEED_LLVM=true
 NEED_ALIVE2=true
-NEED_LLUBI=true
 
 FAILED=false
 
@@ -210,32 +181,18 @@ if $NEED_ALIVE2 && ! $FAILED; then
     fi
 fi
 
-if $NEED_LLUBI && ! $FAILED; then
-    echo "BUILD: llubi $LLUBI_CURRENT → $LLUBI_LATEST"
-    if checkout_and_build_llubi "$LLUBI_LATEST"; then
-        echo "OK: llubi"
-    else
-        echo "FAIL: llubi build"
-        FAILED=true
-    fi
-fi
-
 if $FAILED; then
-    echo "ROLLBACK: restoring known-good triple"
+    echo "ROLLBACK: restoring known-good pair"
     rollback_llvm
     rollback_alive2
-    rollback_llubi
     exit 2
 fi
 
-# All updated components built successfully — record new triple.
+# All updated components built successfully — record new pair.
 if $NEED_LLVM; then
     update_known_hash llvm "$LLVM_LATEST"
 fi
 if $NEED_ALIVE2; then
     update_known_hash alive2 "$ALIVE2_LATEST"
-fi
-if $NEED_LLUBI; then
-    update_known_hash llubi "$LLUBI_LATEST"
 fi
 echo "OK: all tools updated"

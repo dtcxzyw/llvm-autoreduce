@@ -4,13 +4,13 @@ description: Reduce LLVM miscompilation reproducers — LLUBI/Alive2 oracle + op
 ---
 
 ## Tools
-All LLVM tools are on PATH: `opt`, `llc`, `lli`, `llvm-reduce`, `clang`, `alive-tv`, `llubi_legacy`, `llvm-extract`.
+All LLVM tools are on PATH: `opt`, `llc`, `lli`, `llvm-reduce`, `clang`, `alive-tv`, `llubi`, `llvm-extract`.
 
-**Timeout rule: wrap every standalone `opt`, `llc`, `lli`, or `clang` command with `timeout 60`.** llubi_legacy `--reduce-mode --max-steps 1000000` is sufficient. interestingness.sh commands already carry timeouts — no extra wrapping needed there.
+**Timeout rule: wrap every standalone `opt`, `llc`, `lli`, or `clang` command with `timeout 60`.** llubi `--max-steps 1000000` is sufficient. interestingness.sh commands already carry timeouts — no extra wrapping needed there.
 
 ## Miscompilation Reduction Pipeline
 
-**CRITICAL: Reduction operates exclusively on LLVM IR. Never compile IR to native binaries for verification — use the oracle tools (llubi_legacy, alive-tv, lli) directly on IR.**
+**CRITICAL: Reduction operates exclusively on LLVM IR. Never compile IR to native binaries for verification — use the oracle tools (llubi, alive-tv, lli) directly on IR.**
 
 ### 0. Read metadata from extract.json
 Read `extract.json` and note:
@@ -27,27 +27,27 @@ ln -sf <reproducer_file> repro.ll
 ### 1. Choose bisect/reduce oracle
 
 Based on `extract.json` oracle:
-- `oracle=opt` (middle-end) → use **llubi_legacy** for bisect and reduce
+- `oracle=opt` (middle-end) → use **llubi** for bisect and reduce
 - `oracle=llc` (backend) → use **lli** for reduce (no bisect needed — the reproducer IR from clang is already fully optimized)
 
-**CRITICAL — lli preprocessing:** Before using the `lli` oracle, preprocess the IR to remove `main()` argument dependencies. If `main()` uses `argc`/`argv`, strip those references from the IR (e.g., replace `argc` with a constant). Without this, `llubi_legacy` and `lli` may produce different output even on a correct backend because `llubi_legacy` does not pass command-line arguments.
+**CRITICAL — lli preprocessing:** Before using the `lli` oracle, preprocess the IR to remove `main()` argument dependencies. If `main()` uses `argc`/`argv`, strip those references from the IR (e.g., replace `argc` with a constant). Without this, `llubi` and `lli` may produce different output even on a correct backend because llubi passes its own command-line arguments to `main()` (argv[0] = the input file name) and only fills unknown signatures with null values.
 
 ### 2. Reproduce the miscompilation
 
 **Middle-end (llubi):**
 ```
 set -o pipefail
-timeout 60 llubi_legacy --reduce-mode --max-steps 1000000 repro.ll > ref_ubi
-! opt -passes='<args>' repro.ll -S | llubi_legacy --reduce-mode --max-steps 1000000 - | diff -q ref_ubi -
+timeout 60 llubi --max-steps 1000000 repro.ll > ref_ubi
+! opt -passes='<args>' repro.ll -S | llubi --max-steps 1000000 - | diff -q ref_ubi -
 ```
 **Backend (lli — no bisect, IR is already optimized):**
 ```
 set -e
-timeout 60 llubi_legacy --reduce-mode --max-steps 1000000 repro.ll > ref_ubi
+timeout 60 llubi --max-steps 1000000 repro.ll > ref_ubi
 timeout 10 lli <args> repro.ll > _lli_out
 ! diff -q ref_ubi _lli_out
 ```
-**ACCEPTED RISK:** Crashes in the pipeline (opt, llubi_legacy, or lli segfault) are treated as miscompilation: `pipefail` makes the pipeline exit non-zero on crash, `!` inverts that to exit 0 ("miscompilation found"). The daemon's final `verify()` step independently checks the reduced IR and will reject cases where the miscompilation does not actually reproduce, so a crash-confused reduction is caught at verification time.
+**ACCEPTED RISK:** Crashes in the pipeline (opt, llubi, or lli segfault) are treated as miscompilation: `pipefail` makes the pipeline exit non-zero on crash, `!` inverts that to exit 0 ("miscompilation found"). The daemon's final `verify()` step independently checks the reduced IR and will reject cases where the miscompilation does not actually reproduce, so a crash-confused reduction is caught at verification time.
 
 ### 3. opt-bisect-limit binary search to find single pass
 
@@ -55,7 +55,7 @@ timeout 10 lli <args> repro.ll > _lli_out
 
 First, pre-compute the reference output and get total pass count:
 ```
-timeout 60 llubi_legacy --reduce-mode --max-steps 1000000 repro.ll > ref_ubi
+timeout 60 llubi --max-steps 1000000 repro.ll > ref_ubi
 timeout 60 opt -opt-bisect-limit=-1 -passes='<args>' repro.ll -S -o /dev/null 2>&1   → total=N
 ```
 
@@ -70,7 +70,7 @@ M="$1"
 ref="$2"
 ir="$3"
 timeout 30 opt -opt-bisect-limit="$M" -passes='<args>' "$ir" -S > _bisect_opt.ll
-timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 _bisect_opt.ll > _bisect_out.txt
+timeout 120 llubi --max-steps 1000000 _bisect_opt.ll > _bisect_out.txt
 ! diff -q "$ref" _bisect_out.txt
 SCRIPT
 chmod +x bisect.sh
@@ -132,9 +132,9 @@ if grep -q " undef" "$1"; then exit 1; fi
 if grep -qP 'declare.*@llvm\.(x86|aarch64|arm|nvptx|amdgcn)\.' "$1"; then
   grep -q 'target-features' "$1" || exit 1
 fi
-timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt
+timeout 120 llubi --max-steps 1000000 "$1" > _ref.txt
 timeout 30 opt -passes='<pass_name>' "$1" -S > _opt.ll
-timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 _opt.ll > _out.txt
+timeout 120 llubi --max-steps 1000000 _opt.ll > _out.txt
 ! diff -q _ref.txt _out.txt
 SCRIPT
 ```
@@ -148,8 +148,8 @@ if grep -q " undef" "$1"; then exit 1; fi
 if grep -qP 'declare.*@llvm\.(x86|aarch64|arm|nvptx|amdgcn)\.' "$1"; then
   grep -q 'target-features' "$1" || exit 1
 fi
-timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt || exit 1
-timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 -
+timeout 120 llubi --max-steps 1000000 "$1" > _ref.txt || exit 1
+timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 llubi --max-steps 1000000 -
 ret=$?
 # Exit 0 (interesting) if pipeline failed with crash/signal/assert — NOT timeout (124)
 test $ret -ne 0 -a $ret -ne 124
@@ -165,8 +165,8 @@ if grep -q " undef" "$1"; then exit 1; fi
 if grep -qP 'declare.*@llvm\.(x86|aarch64|arm|nvptx|amdgcn)\.' "$1"; then
   grep -q 'target-features' "$1" || exit 1
 fi
-timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt || exit 1
-timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 -
+timeout 120 llubi --max-steps 1000000 "$1" > _ref.txt || exit 1
+timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 llubi --max-steps 1000000 -
 ret=$?
 # Exit 0 (interesting) only if pipeline timed out
 test $ret -eq 124
@@ -182,9 +182,9 @@ if grep -q " undef" "$1"; then exit 1; fi
 if grep -qP 'declare.*@llvm\.(x86|aarch64|arm|nvptx|amdgcn)\.' "$1"; then
   grep -q 'target-features' "$1" || exit 1
 fi
-# Reject IR where main() has parameters — llubi_legacy and lli disagree on argc/argv
+# Reject IR where main() has parameters — llubi and lli may pass different argv
 grep -qP 'define\s+\S+\s+@main\s*\(\s*\)' "$1" || exit 1
-timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt
+timeout 120 llubi --max-steps 1000000 "$1" > _ref.txt
 timeout 10 lli <args> "$1" > _out.txt
 ! diff -q _ref.txt _out.txt
 SCRIPT
@@ -199,9 +199,9 @@ if grep -q " undef" "$1"; then exit 1; fi
 if grep -qP 'declare.*@llvm\.(x86|aarch64|arm|nvptx|amdgcn)\.' "$1"; then
   grep -q 'target-features' "$1" || exit 1
 fi
-# Reject IR where main() has parameters — llubi_legacy and lli disagree on argc/argv
+# Reject IR where main() has parameters — llubi and lli may pass different argv
 grep -qP 'define\s+\S+\s+@main\s*\(\s*\)' "$1" || exit 1
-timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt || exit 1
+timeout 120 llubi --max-steps 1000000 "$1" > _ref.txt || exit 1
 timeout 10 lli <args> "$1" > /dev/null
 ret=$?
 # Exit 0 (interesting) if pipeline failed with crash/signal/assert — NOT timeout (124)
@@ -218,9 +218,9 @@ if grep -q " undef" "$1"; then exit 1; fi
 if grep -qP 'declare.*@llvm\.(x86|aarch64|arm|nvptx|amdgcn)\.' "$1"; then
   grep -q 'target-features' "$1" || exit 1
 fi
-# Reject IR where main() has parameters — llubi_legacy and lli disagree on argc/argv
+# Reject IR where main() has parameters — llubi and lli may pass different argv
 grep -qP 'define\s+\S+\s+@main\s*\(\s*\)' "$1" || exit 1
-timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt || exit 1
+timeout 120 llubi --max-steps 1000000 "$1" > _ref.txt || exit 1
 timeout 10 lli <args> "$1" > /dev/null
 ret=$?
 # Exit 0 (interesting) only if pipeline timed out
@@ -237,7 +237,7 @@ if grep -q " undef" "$1"; then exit 1; fi
 if grep -qP 'declare.*@llvm\.(x86|aarch64|arm|nvptx|amdgcn)\.' "$1"; then
   grep -q 'target-features' "$1" || exit 1
 fi
-timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt || exit 1
+timeout 120 llubi --max-steps 1000000 "$1" > _ref.txt || exit 1
 timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 lli -
 ret=$?
 # Exit 0 (interesting) if pipeline failed with crash/signal/assert — NOT timeout (124)
@@ -255,7 +255,7 @@ if grep -q " undef" "$1"; then exit 1; fi
 if grep -qP 'declare.*@llvm\.(x86|aarch64|arm|nvptx|amdgcn)\.' "$1"; then
   grep -q 'target-features' "$1" || exit 1
 fi
-timeout 120 llubi_legacy --reduce-mode --max-steps 1000000 "$1" > _ref.txt || exit 1
+timeout 120 llubi --max-steps 1000000 "$1" > _ref.txt || exit 1
 timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 lli -
 ret=$?
 # Exit 0 (interesting) only if pipeline timed out
@@ -283,7 +283,7 @@ If llvm-reduce gets stuck on a specific delta pass (check its progress output fo
   "ir_file": "reduced.ll",
   "reference_file": "repro.ll",
   "oracle": "llubi",
-  "llubi_args": "--reduce-mode --max-steps 1000000",
+  "llubi_args": "--max-steps 1000000",
   "alive2_args": ""
 }
 ```
@@ -296,7 +296,7 @@ If llvm-reduce gets stuck on a specific delta pass (check its progress output fo
   "ir_file": "reduced.ll",
   "reference_file": "repro.ll",
   "oracle": "lli",
-  "llubi_args": "--reduce-mode --max-steps 1000000",
+  "llubi_args": "--max-steps 1000000",
   "lli_args": ""
 }
 ```
@@ -381,7 +381,7 @@ The `ir_file` for alive2 oracle MUST contain exactly 1 function definition. Func
   "ir_file": "reduced.ll",
   "reference_file": "repro.ll",
   "oracle": "llubi",
-  "llubi_args": "--reduce-mode --max-steps 1000000",
+  "llubi_args": "--max-steps 1000000",
   "alive2_args": ""
 }
 ```
@@ -394,7 +394,7 @@ The `ir_file` for alive2 oracle MUST contain exactly 1 function definition. Func
   "ir_file": "reduced.ll",
   "reference_file": "repro.ll",
   "oracle": "lli",
-  "llubi_args": "--reduce-mode --max-steps 1000000",
+  "llubi_args": "--max-steps 1000000",
   "lli_args": ""
 }
 ```
@@ -411,7 +411,7 @@ The `ir_file` for alive2 oracle MUST contain exactly 1 function definition. Func
   "ir_file": "error.ll",
   "reference_file": "repro.ll",
   "oracle": "llubi",
-  "llubi_args": "--reduce-mode --max-steps 1000000",
+  "llubi_args": "--max-steps 1000000",
   "alive2_args": "",
   "error": "brief description of what failed"
 }
