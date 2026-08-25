@@ -36,7 +36,7 @@ checkout_and_build_llvm() {
         -DLLVM_ENABLE_RTTI=ON \
         -DLLVM_ENABLE_EH=ON \
         -DLLVM_ENABLE_ZSTD=OFF
-    cmake --build "$WORK_DIR/llvm-trunk/build" --target opt llc lli llvm-reduce clang
+    cmake --build "$WORK_DIR/llvm-trunk/build" --target opt llc lli llvm-reduce clang -j 16
 }
 
 checkout_and_build_alive2() {
