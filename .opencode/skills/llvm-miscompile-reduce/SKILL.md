@@ -123,6 +123,8 @@ if grep -qP 'declare.*@llvm\.(x86|aarch64|arm|nvptx|amdgcn)\.' "$1"; then
 fi
 ```
 
+**main() signature guard — only the lli (backend) templates need one.** The backend templates reject IR where `main()` has parameters (`grep -qP 'define\s+\S+\s+@main\s*\(\s*\)' "$1" || exit 1`): llubi and lli may pass different argv to a parameterized main, so the ref-vs-test comparison would be unreliable. The llubi (middle-end) templates intentionally have NO main-signature guard — both the reference and transformed runs execute the SAME candidate, so llubi applies the same signature rule (real argv for `main(i32, ptr)`, null-fill with a warning for anything else) to both runs and a signature change can never fake a ref-vs-test difference. Candidates that dereference null-filled main arguments make the llubi reference run fail with `Immediate UB detected` and are rejected by the ref `|| exit 1` / `set -e` — an implicit safety net. Do NOT copy the main() guard into the llubi templates: a valid `main(i32 %argc, ptr %argv)` reproducer would be wrongly rejected. If llvm-reduce strips an unused main() parameter during reduction, the resulting candidate's behavior changes symmetrically (both runs see it), so it is simply not interesting and gets discarded.
+
 **llubi oracle (middle-end) — pattern=wrong_output:**
 ```bash
 cat > interestingness.sh <<'SCRIPT'
