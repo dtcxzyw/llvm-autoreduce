@@ -589,6 +589,17 @@ def verify_llubi(result, workdir_path, pattern=""):
     if not _check_no_undef(result["ir_file"], workdir_path):
         log.error("llubi verify: IR contains undef")
         return False
+    # Runnable/self-contained requirement — mirrors the i32 @main( and
+    # external-global greps in the llubi interestingness templates. Applies
+    # to both extract-stage reproducers and reduced IR: llubi must have an
+    # `i32 @main(` entry point to execute, and `external global` references
+    # cannot be resolved by llubi/lli.
+    if not _check_main_i32(result["ir_file"], workdir_path):
+        log.error("llubi verify: IR must define a runnable `i32 @main(` entry point")
+        return False
+    if not _check_no_external_global(result["ir_file"], workdir_path):
+        log.error("llubi verify: IR must not reference external globals")
+        return False
     args = result.get("args", "")
     # llubi_args is produced by the reducer agent (trusted oracle).
     llubi_args = result.get("llubi_args", "--max-steps 1000000")
@@ -965,6 +976,39 @@ def _check_main_no_params(reproducer_file, workdir_path):
     except (ValueError, OSError):
         return False
     return bool(_MAIN_NO_PARAMS_RE.search(content))
+
+
+def _check_main_i32(reproducer_file, workdir_path):
+    """Verify the IR defines an `i32 @main(` entry point (parameters allowed).
+
+    Mirrors the `grep -q "i32 @main("` guard in the llubi interestingness
+    templates: llvm-reduce must never delete or retype the entry function,
+    otherwise llubi has nothing runnable to execute. Parameters are allowed —
+    both the reference and transformed llubi runs see the same signature.
+    """
+    safe_ir = _safe_relative(workdir_path, reproducer_file)
+    try:
+        content = workdir.read(safe_ir)
+    except (ValueError, OSError):
+        return False
+    return "i32 @main(" in content
+
+
+def _check_no_external_global(reproducer_file, workdir_path):
+    """Verify the IR contains no `external global` definitions.
+
+    Mirrors the `grep -q "external global"` guard in the llubi interestingness
+    templates: llvm-reduce strips global initializers into `external global`
+    references. External globals cannot be resolved by llubi/lli, and the
+    resulting IR is not self-contained — daemon verification and any upstream
+    reproduction would diverge from the interestingness runs.
+    """
+    safe_ir = _safe_relative(workdir_path, reproducer_file)
+    try:
+        content = workdir.read(safe_ir)
+    except (ValueError, OSError):
+        return False
+    return "external global" not in content
 
 
 def _check_target_triple_x86(reproducer_file, workdir_path):

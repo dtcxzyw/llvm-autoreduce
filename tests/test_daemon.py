@@ -415,3 +415,55 @@ class TestVerifyLlubiUnsupported:
 
         monkeypatch.setattr(daemon, "_run_process", fake)
         assert daemon.verify_llubi(result, tmp_path, pattern="nonzero_exit") is True
+
+
+class TestCheckMainI32:
+    """_check_main_i32 mirrors the `grep -q "i32 @main("` interestingness guard."""
+
+    def test_plain_i32_main_accepted(self, tmp_path):
+        (tmp_path / "r.ll").write_text('define i32 @main() {\n  ret i32 0\n}\n')
+        assert daemon._check_main_i32("r.ll", tmp_path)
+
+    def test_parameterized_i32_main_accepted(self, tmp_path):
+        (tmp_path / "r.ll").write_text(
+            'define i32 @main(i32 %argc, ptr %argv) {\n  ret i32 0\n}\n'
+        )
+        assert daemon._check_main_i32("r.ll", tmp_path)
+
+    def test_dso_local_i32_main_accepted(self, tmp_path):
+        (tmp_path / "r.ll").write_text(
+            'define dso_local i32 @main() {\n  ret i32 0\n}\n'
+        )
+        assert daemon._check_main_i32("r.ll", tmp_path)
+
+    def test_void_main_rejected(self, tmp_path):
+        (tmp_path / "r.ll").write_text('define void @main() {\n  ret void\n}\n')
+        assert not daemon._check_main_i32("r.ll", tmp_path)
+
+    def test_no_main_rejected(self, tmp_path):
+        (tmp_path / "r.ll").write_text(
+            'define i32 @foo() {\n  ret i32 0\n}\n'
+        )
+        assert not daemon._check_main_i32("r.ll", tmp_path)
+
+    def test_missing_file_rejected(self, tmp_path):
+        assert not daemon._check_main_i32("nonexistent.ll", tmp_path)
+
+
+class TestCheckNoExternalGlobal:
+    """_check_no_external_global mirrors the `grep -q "external global"` guard."""
+
+    def test_no_external_global_accepted(self, tmp_path):
+        (tmp_path / "r.ll").write_text(
+            '@g = global i32 42\ndefine i32 @main() {\n  ret i32 0\n}\n'
+        )
+        assert daemon._check_no_external_global("r.ll", tmp_path)
+
+    def test_external_global_rejected(self, tmp_path):
+        (tmp_path / "r.ll").write_text(
+            '@g = external global i32\ndefine i32 @main() {\n  ret i32 0\n}\n'
+        )
+        assert not daemon._check_no_external_global("r.ll", tmp_path)
+
+    def test_missing_file_rejected(self, tmp_path):
+        assert not daemon._check_no_external_global("nonexistent.ll", tmp_path)
