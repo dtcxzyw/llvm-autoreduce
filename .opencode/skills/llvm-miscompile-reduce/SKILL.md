@@ -123,7 +123,7 @@ if grep -qP 'declare.*@llvm\.(x86|aarch64|arm|nvptx|amdgcn)\.' "$1"; then
 fi
 ```
 
-**main() signature guard — only the lli (backend) templates need one.** The backend templates reject IR where `main()` has parameters (`grep -qP 'define\s+\S+\s+@main\s*\(\s*\)' "$1" || exit 1`): llubi and lli may pass different argv to a parameterized main, so the ref-vs-test comparison would be unreliable. The llubi (middle-end) templates intentionally have NO main-signature guard — both the reference and transformed runs execute the SAME candidate, so llubi applies the same signature rule (real argv for `main(i32, ptr)`, null-fill with a warning for anything else) to both runs and a signature change can never fake a ref-vs-test difference. Candidates that dereference null-filled main arguments make the llubi reference run fail with `Immediate UB detected` and are rejected by the ref `|| exit 1` / `set -e` — an implicit safety net. Do NOT copy the main() guard into the llubi templates: a valid `main(i32 %argc, ptr %argv)` reproducer would be wrongly rejected. If llvm-reduce strips an unused main() parameter during reduction, the resulting candidate's behavior changes symmetrically (both runs see it), so it is simply not interesting and gets discarded.
+**main()/self-containment guards — differ per oracle.** The lli (backend) templates reject IR where `main()` has parameters (`grep -qP 'define\s+\S+\s+@main\s*\(\s*\)' "$1" || exit 1`): llubi and lli may pass different argv to a parameterized main, so the ref-vs-test comparison would be unreliable. The llubi (middle-end) templates guard runnability and self-containment instead — every candidate MUST keep an `i32 @main(` definition (`grep -q "i32 @main(" "$1" || exit 1`) and MUST NOT contain `external global` (`grep -q "external global" "$1" && exit 1`). Without these guards llvm-reduce would delete or retype the entry function (llubi then has nothing runnable to execute) or strip global initializers into `external global` references — external symbols cannot be resolved by llubi/lli, so such IR is not self-contained and would not behave identically under the daemon's verify step or in an upstream reproduction. The i32-main guard deliberately permits a parameterized `i32 @main(i32 %argc, ptr %argv)` — both the reference and transformed runs execute the SAME candidate, so llubi applies the same signature rule (real argv for `main(i32, ptr)`, null-fill with a warning for anything else) to both runs and a signature change can never fake a ref-vs-test difference. Candidates that dereference null-filled main arguments make the llubi reference run fail with `Immediate UB detected` and are rejected by the ref `|| exit 1` / `set -e` — an implicit safety net. If llvm-reduce strips an unused main() parameter during reduction, the resulting candidate's behavior changes symmetrically (both runs see it), so it is simply not interesting and gets discarded. The daemon's `verify_llubi` statically enforces the same two requirements on both the extract-stage reproducer and the reduced IR.
 
 **llubi oracle (middle-end) — pattern=wrong_output:**
 ```bash
@@ -134,6 +134,9 @@ if grep -q " undef" "$1"; then exit 1; fi
 if grep -qP 'declare.*@llvm\.(x86|aarch64|arm|nvptx|amdgcn)\.' "$1"; then
   grep -q 'target-features' "$1" || exit 1
 fi
+# Reject IR without a runnable `i32 @main(` — and with external globals (not self-contained)
+if ! grep -q "i32 @main(" "$1"; then exit 1; fi
+if grep -q "external global" "$1"; then exit 1; fi
 timeout 120 llubi --max-steps 1000000 "$1" > _ref.txt
 timeout 30 opt -passes='<pass_name>' "$1" -S > _opt.ll
 timeout 120 llubi --max-steps 1000000 _opt.ll > _out.txt
@@ -150,6 +153,9 @@ if grep -q " undef" "$1"; then exit 1; fi
 if grep -qP 'declare.*@llvm\.(x86|aarch64|arm|nvptx|amdgcn)\.' "$1"; then
   grep -q 'target-features' "$1" || exit 1
 fi
+# Reject IR without a runnable `i32 @main(` — and with external globals (not self-contained)
+if ! grep -q "i32 @main(" "$1"; then exit 1; fi
+if grep -q "external global" "$1"; then exit 1; fi
 timeout 120 llubi --max-steps 1000000 "$1" > _ref.txt || exit 1
 timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 llubi --max-steps 1000000 - > _out.txt 2> _err.txt
 ret=$?
@@ -169,6 +175,9 @@ if grep -q " undef" "$1"; then exit 1; fi
 if grep -qP 'declare.*@llvm\.(x86|aarch64|arm|nvptx|amdgcn)\.' "$1"; then
   grep -q 'target-features' "$1" || exit 1
 fi
+# Reject IR without a runnable `i32 @main(` — and with external globals (not self-contained)
+if ! grep -q "i32 @main(" "$1"; then exit 1; fi
+if grep -q "external global" "$1"; then exit 1; fi
 timeout 120 llubi --max-steps 1000000 "$1" > _ref.txt || exit 1
 timeout 30 opt -passes='<pass_name>' "$1" -S | timeout 120 llubi --max-steps 1000000 -
 ret=$?
