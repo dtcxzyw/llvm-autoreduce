@@ -8,13 +8,23 @@ from llvm_autoreduce.github import _build_bisect_script
 class TestBuildBisectScript:
     def test_pattern_plain(self):
         script = _build_bisect_script("opt", "-passes=licm", "stack dump")
-        assert "grep -q" in script
+        assert "grep -qF" in script
         assert shlex.quote("stack dump") in script
 
     def test_pattern_with_double_quotes(self):
         script = _build_bisect_script("opt", "", 'error: "foo" failed')
-        assert "grep -q" in script
+        assert "grep -qF" in script
         assert shlex.quote('error: "foo" failed') in script
+
+    def test_pattern_with_regex_metachars(self):
+        pattern = (
+            'Assertion `all_of(Bundles, [](const ScheduleBundle *Bundle) { '
+            'return Bundle->isScheduled(); }) && "must be scheduled at this '
+            'point"\' failed.'
+        )
+        script = _build_bisect_script("opt", "-passes=slp-vectorizer", pattern)
+        assert "grep -qF" in script
+        assert shlex.quote(pattern) in script
 
     def test_pattern_with_backticks(self):
         script = _build_bisect_script("opt", "", "crash in `main`")

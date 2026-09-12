@@ -236,7 +236,7 @@ def _build_bisect_script(oracle, args, pattern):
         cmd = f"./{exec_name} test.ll {suppress} 2>&1"
     return (
         f"{cmd} | "
-        f"grep -q {shlex.quote(pattern)}\n"
+        f"grep -qF {shlex.quote(pattern)}\n"
         f"if [ $? -eq 0 ]; then\n"
         f"    exit 1\n"
         f"fi\n"
