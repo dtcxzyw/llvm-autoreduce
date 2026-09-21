@@ -1870,13 +1870,16 @@ def _pick_bisect_sha(comments, version_fn):
     SHA is the first bad commit and the last is the good commit. The bad
     commit is the correct basis for the regression version, but it may be
     absent from the local LLVM tree (e.g. newer than the last fetch) and
-    fail to compute a version; later SHAs are tried as fallback.
+    fail to compute a version; later SHAs are tried as fallback. Progress
+    lines of the form "Result on commit X" refer to commits merely probed
+    during bisection and are ignored.
     """
     tried = set()
     for comment in comments:
         if (comment.get("user", {}).get("login") or "").startswith("github-actions"):
             body = comment.get("body", "")
-            for sha_match in re.finditer(r"\b([0-9a-f]{40})\b", body):
+            lines = [line for line in body.splitlines() if "Result on commit" not in line]
+            for sha_match in re.finditer(r"\b([0-9a-f]{40})\b", "\n".join(lines)):
                 commit_sha = sha_match.group(1)
                 if commit_sha in tried:
                     continue

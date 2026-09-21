@@ -312,6 +312,15 @@ class TestPickBisectSha:
         )]
         assert _pick_bisect_sha(comments, self._version_fn) == ("b" * 40, 23)
 
+    def test_ignores_result_on_commit_lines(self):
+        versions = {"a" * 40: 24, "c" * 40: 22}
+        comments = [self._bot_comment(
+            f"[llvm-bisect-service] Result on commit {'c'*40}: BAD (exit 1)\n"
+            f"{'a'*40} is the first bad commit\n"
+            f"Bad commit: {'a'*40} Good commit: {'b'*40}"
+        )]
+        assert _pick_bisect_sha(comments, versions.get) == ("a" * 40, 24)
+
     def test_returns_none_when_nothing_computable(self):
         comments = [self._bot_comment(f"{'c'*40} is the first bad commit")]
         assert _pick_bisect_sha(comments, self._version_fn) == (None, None)
