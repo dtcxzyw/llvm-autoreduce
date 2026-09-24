@@ -74,7 +74,7 @@ def run(agent, workdir, prompt, timeout, shutdown_check=None):
     # environment variable or config file.
     cmd = [
         "opencode", "run",
-        "--model", "deepseek/deepseek-v4-flash",
+        "--model", "deepseek/deepseek-flash",
         "--agent", agent,
         "--format", "json",
     ]

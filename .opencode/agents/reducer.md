@@ -2,7 +2,7 @@
 description: Reduce LLVM crash and miscompilation reproducers
 mode: all
 hidden: true
-model: deepseek/deepseek-v4-flash
+model: deepseek/deepseek-flash
 permission:
   webfetch: deny
   websearch: deny
