@@ -139,20 +139,18 @@ class TestBuildMiscompilationBisectScript:
             script = _build_bisect_script("miscompilation", "llubi", "-passes=gvn", pattern)
             assert "timeout" not in script
 
-    def test_llubi_custom_args_quoted(self):
+    def test_llubi_args_quoted(self):
         script = _build_bisect_script(
             "miscompilation", "llubi", "-passes=licm;rm -rf /", "wrong_output",
-            llubi_args="--max-steps 1000",
         )
-        assert "./llubi-exec --max-steps 1000 test.ll" in script
+        assert "./llubi-exec --max-steps 1000000 test.ll" in script
         assert shlex.join(["-passes=licm;rm", "-rf", "/"]) in script
 
     def test_lli_wrong_output(self):
         script = _build_bisect_script(
-            "miscompilation", "lli", "", "wrong_output",
-            llubi_args="--max-steps 1000", lli_args="-O0",
+            "miscompilation", "lli", "", "wrong_output", lli_args="-O0",
         )
-        assert "./llubi-exec --max-steps 1000 test.ll" in script
+        assert "./llubi-exec --max-steps 1000000 test.ll" in script
         assert "timeout 30 ./lli-exec -O0 test.ll > _out.txt" in script
         assert "diff -q _ref.txt _out.txt" in script
         assert "Unrecognized instruction" not in script

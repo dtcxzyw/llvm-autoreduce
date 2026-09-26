@@ -297,8 +297,7 @@ If llvm-reduce gets stuck on a specific delta pass (check its progress output fo
   "args": "-passes=<pass_name>",
   "ir_file": "reduced.ll",
   "reference_file": "repro.ll",
-  "oracle": "llubi",
-  "llubi_args": "--max-steps 1000000"
+  "oracle": "llubi"
 }
 ```
 
@@ -310,7 +309,6 @@ If llvm-reduce gets stuck on a specific delta pass (check its progress output fo
   "ir_file": "reduced.ll",
   "reference_file": "repro.ll",
   "oracle": "lli",
-  "llubi_args": "--max-steps 1000000",
   "lli_args": ""
 }
 ```
@@ -351,8 +349,7 @@ Verify the reduced IR still reproduces the miscompilation with the single pass. 
   "args": "-passes=gvn",
   "ir_file": "reduced.ll",
   "reference_file": "repro.ll",
-  "oracle": "llubi",
-  "llubi_args": "--max-steps 1000000"
+  "oracle": "llubi"
 }
 ```
 
@@ -364,7 +361,6 @@ Verify the reduced IR still reproduces the miscompilation with the single pass. 
   "ir_file": "reduced.ll",
   "reference_file": "repro.ll",
   "oracle": "lli",
-  "llubi_args": "--max-steps 1000000",
   "lli_args": ""
 }
 ```
@@ -380,7 +376,6 @@ Verify the reduced IR still reproduces the miscompilation with the single pass. 
   "ir_file": "error.ll",
   "reference_file": "repro.ll",
   "oracle": "llubi",
-  "llubi_args": "--max-steps 1000000",
   "error": "brief description of what failed"
 }
 ```

@@ -13,6 +13,7 @@ from .config import (
     BISECT_REPO,
     GITHUB_API,
     ISSUES_PER_ROUND,
+    LLUBI_ARGS,
     LLVM_BISECT_TOKEN,
     SOURCE_REPO,
     TARGET_REPO,
@@ -315,14 +316,14 @@ def _miscomp_pattern_check(pattern, step_bounded=False):
     raise ValueError(f"unknown miscompilation pattern: {pattern!r}")
 
 
-def _build_llubi_bisect_script(args, pattern, llubi_args):
+def _build_llubi_bisect_script(args, pattern):
     """Middle-end task: compare llubi(ref) with llubi(opt<args>(test.ll)).
 
-    No timeout is needed: llubi is step-bounded by --max-steps (an
+    No timeout is needed: llubi is step-bounded by config.LLUBI_ARGS (an
     exceeded budget is the non-termination signal) and opt runs on tiny
     reduced IR.
     """
-    llubi = shlex.join(["./llubi-exec"] + shlex.split(llubi_args))
+    llubi = shlex.join(["./llubi-exec"] + shlex.split(LLUBI_ARGS))
     lines = [
         f"{llubi} test.ll > _ref.txt 2> _ref_err.txt",
         "if [ $? -ne 0 ]; then",
@@ -343,12 +344,12 @@ def _build_llubi_bisect_script(args, pattern, llubi_args):
     return "\n".join(lines)
 
 
-def _build_lli_bisect_script(args, pattern, llubi_args, lli_args):
+def _build_lli_bisect_script(args, pattern, lli_args):
     """Backend task: compare llubi(ref) with lli of the (optionally
     opt-transformed) IR. Mirrors verify_lli: args go to opt and lli_args
     go to lli. Only the lli run is timeout-bounded — it executes native
     code and can hang."""
-    llubi = shlex.join(["./llubi-exec"] + shlex.split(llubi_args))
+    llubi = shlex.join(["./llubi-exec"] + shlex.split(LLUBI_ARGS))
     lli = shlex.join(["./lli-exec"] + shlex.split(lli_args))
     lines = [
         f"{llubi} test.ll > _ref.txt 2> _ref_err.txt",
@@ -373,8 +374,7 @@ def _build_lli_bisect_script(args, pattern, llubi_args, lli_args):
     return "\n".join(lines)
 
 
-def _build_bisect_script(bug_type, oracle, args, pattern,
-                         llubi_args="--max-steps 1000000", lli_args=""):
+def _build_bisect_script(bug_type, oracle, args, pattern, lli_args=""):
     """Build the shell script for a bisect task. Exposed for testing.
 
     Crash tasks exit 1 when the crash pattern still appears. Miscompilation
@@ -390,9 +390,9 @@ def _build_bisect_script(bug_type, oracle, args, pattern,
     if bug_type != "miscompilation":
         raise ValueError(f"unsupported bisect bug type: {bug_type!r}")
     if oracle == "llubi":
-        return _build_llubi_bisect_script(args, pattern, llubi_args)
+        return _build_llubi_bisect_script(args, pattern)
     if oracle == "lli":
-        return _build_lli_bisect_script(args, pattern, llubi_args, lli_args)
+        return _build_lli_bisect_script(args, pattern, lli_args)
     raise ValueError(f"unsupported miscompilation bisect oracle: {oracle!r}")
 
 
@@ -423,7 +423,7 @@ def add_issue_to_project(issue_number, project_number=30, org="llvm", repo="llvm
 
 
 def create_bisect_issue(issue_id, bug_type, oracle, args, pattern, ir_content,
-                        llubi_args="--max-steps 1000000", lli_args=""):
+                        lli_args=""):
     """Create a bisect task on dtcxzyw/llvm-bisect-service.
 
     Crash tasks bisect on the crash pattern; miscompilation tasks bisect on
@@ -435,8 +435,7 @@ def create_bisect_issue(issue_id, bug_type, oracle, args, pattern, ir_content,
         log.warning("bisect: LLVM_BISECT_TOKEN not set, cannot create bisect issue=%d", issue_id)
         return
     script = _build_bisect_script(
-        bug_type, oracle, args, pattern,
-        llubi_args=llubi_args, lli_args=lli_args,
+        bug_type, oracle, args, pattern, lli_args=lli_args,
     )
     body_parts = [
         f"```\n{script}\n```",

@@ -605,8 +605,8 @@ def verify_llubi(result, workdir_path, pattern=""):
         log.error("llubi verify: IR must not reference external globals")
         return False
     args = result.get("args", "")
-    # llubi_args is produced by the reducer agent (trusted oracle).
-    llubi_args = result.get("llubi_args", "--max-steps 1000000")
+    # Fixed step budget (config.LLUBI_ARGS) — never agent-controlled.
+    llubi_args = config.LLUBI_ARGS
     # Use the built LLVM toolchain opt binary, never PATH.
     opt_path = str(config.LLVM_BIN / "opt")
     try:
@@ -722,9 +722,10 @@ def verify_lli(result, workdir_path, pattern=""):
         log.error("lli verify: reproducer must have target triple starting with x86_64")
         return False
     args = result.get("args", "")
-    # lli_args and llubi_args are produced by the reducer agent (trusted oracle).
+    # lli_args is produced by the reducer agent (trusted oracle).
     lli_args = result.get("lli_args", "")
-    llubi_args = result.get("llubi_args", "--max-steps 1000000")
+    # Fixed step budget (config.LLUBI_ARGS) — never agent-controlled.
+    llubi_args = config.LLUBI_ARGS
     opt_path = str(config.LLVM_BIN / "opt")
     lli_path = str(config.LLVM_BIN / "lli")
     try:
@@ -1024,11 +1025,8 @@ def verify_extract(meta, workdir_path):
             "args": args,
         }
         if oracle == "opt":
-            result["llubi_args"] = "--max-steps 1000000"
             return verify_llubi(result, workdir_path, pattern)
         if oracle == "llc":
-            result["llubi_args"] = "--max-steps 1000000"
-            result["lli_args"] = ""
             return verify_lli(result, workdir_path, pattern)
         log.error("verify_extract: miscompilation with unknown oracle=%r", oracle)
         return False
@@ -1263,21 +1261,19 @@ def _generate_report(meta, result, workdir_path, issue_id, timing=None):
         lines.append("```")
     elif bug_type == "miscompilation":
         if oracle == "llubi":
-            llubi_args = result.get("llubi_args", "--max-steps 1000000")
             lines.append("```bash")
             lines.append("# Reference:")
-            lines.append(f"llubi {llubi_args} {ir_file}")
+            lines.append(f"llubi {config.LLUBI_ARGS} {ir_file}")
             lines.append("# Transformed (incorrect):")
-            lines.append(f"opt {args} {ir_file} -S > __reduced_opt.ll && llubi {llubi_args} __reduced_opt.ll")
+            lines.append(f"opt {args} {ir_file} -S > __reduced_opt.ll && llubi {config.LLUBI_ARGS} __reduced_opt.ll")
             lines.append("```")
         elif oracle == "lli":
             lli_args = result.get("lli_args", "")
-            llubi_args = result.get("llubi_args", "--max-steps 1000000")
             lli_cmd = f"lli {lli_args} {ir_file}".strip()
             lli_cmd = " ".join(lli_cmd.split())
             lines.append("```bash")
             lines.append("# Reference:")
-            lines.append(f"llubi {llubi_args} {ir_file}")
+            lines.append(f"llubi {config.LLUBI_ARGS} {ir_file}")
             lines.append("# Transformed (incorrect, via backend):")
             lines.append(lli_cmd)
             lines.append("```")
@@ -1715,7 +1711,6 @@ def reprocess_issue(issue):
                 result.get("args", ""),
                 meta.get("pattern", ""),
                 ir_content,
-                llubi_args=result.get("llubi_args", "--max-steps 1000000"),
                 lli_args=result.get("lli_args", ""),
             )
             if bisect_num is not None:

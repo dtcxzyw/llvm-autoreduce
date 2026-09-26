@@ -13,6 +13,12 @@ LLVM_BIN = LLVM_TRUNK / "build" / "bin"
 ALIVE2_BIN = ALIVE2_TRUNK / "build" / "alive-tv"
 # llubi is built as an LLVM tool (llvm/tools/llubi) by update-tools.sh.
 LLUBI_BIN = LLVM_BIN / "llubi"
+# Fixed llubi invocation used by verification, report generation and bisect
+# scripts. The step budget is a pipeline invariant — extract-stage
+# verification and the interestingness templates use the same value — and
+# bounded execution is what lets bisect scripts run llubi without a
+# wall-clock timeout.
+LLUBI_ARGS = "--max-steps 1000000"
 
 KNOWN_GOOD = WORK_ROOT / ".known-good"
 PROCESSED = WORK_ROOT / "processed.txt"
