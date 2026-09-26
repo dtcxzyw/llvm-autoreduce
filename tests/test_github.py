@@ -162,8 +162,8 @@ class TestBuildMiscompilationBisectScript:
             "miscompilation", "lli", "-passes=gvn", "nonzero_exit", lli_args="-O2",
         )
         assert "timeout 30 ./lli-exec -O2 _opt.ll > _out.txt" in script
-        assert "timeout ./llubi-exec" not in script
-        assert "timeout ./opt-exec" not in script
+        # Only the lli run is wall-clock bounded.
+        assert script.count("timeout") == 1
 
     def test_lli_opt_args_mirror_verify(self):
         script = _build_bisect_script("miscompilation", "lli", "-passes=gvn", "nonzero_exit")
