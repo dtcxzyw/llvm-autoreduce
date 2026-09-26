@@ -222,8 +222,14 @@ def set_issue_type(issue_number, issue_type):
         log.exception("issue=%d set type failed: %s", issue_number, issue_type)
 
 
-def _build_bisect_script(oracle, args, pattern):
-    """Build the shell script for a bisect task. Exposed for testing."""
+# Per-command timeout for miscompilation bisect scripts. llvm-bisect-service
+# probes candidate good commits with a 60-second timeout, so every command in
+# the script must finish well within one minute.
+_BISECT_CMD_TIMEOUT = 30
+
+
+def _build_crash_bisect_script(oracle, args, pattern):
+    """Crash task: exit 1 when the crash pattern still appears."""
     exec_name = "opt-exec" if oracle == "opt" else "llc-exec"
     suppress = "--disable-output" if oracle == "opt" else "-o /dev/null"
     # args is a shell word list (possibly with agent-provided quoting);
@@ -242,6 +248,132 @@ def _build_bisect_script(oracle, args, pattern):
         f"fi\n"
         f"exit 0"
     )
+
+
+def _quoted_args(args):
+    """Return ' <quoted args>' for shell embedding, or '' for empty args."""
+    return f" {shlex.join(shlex.split(args))}" if args else ""
+
+
+def _miscomp_pattern_check(pattern):
+    """Pattern-specific BAD/GOOD decision shared by both miscompilation
+    bisect scripts. Expects the transformed run's status in $ret and its
+    stdout in _out.txt. Exit 0 = good commit, 1 = bad commit, 125 = skip.
+    """
+    if pattern == "wrong_output":
+        return [
+            # A transformed-run failure is not wrong_output — the pattern
+            # changed, so this commit cannot be evaluated.
+            "if [ $ret -ne 0 ]; then",
+            "    exit 125",
+            "fi",
+            "if diff -q _ref.txt _out.txt > /dev/null; then",
+            "    exit 0",
+            "fi",
+            "exit 1",
+        ]
+    if pattern == "nonzero_exit":
+        return [
+            # Timeout (124) means the program hangs — a different pattern.
+            "if [ $ret -eq 124 ]; then",
+            "    exit 125",
+            "fi",
+            "if [ $ret -eq 0 ]; then",
+            "    exit 0",
+            "fi",
+            "exit 1",
+        ]
+    if pattern == "infinite_loop":
+        return [
+            # Timeout (124) is the bug; a normal exit means this commit is good.
+            "if [ $ret -eq 124 ]; then",
+            "    exit 1",
+            "fi",
+            "if [ $ret -eq 0 ]; then",
+            "    exit 0",
+            "fi",
+            "exit 125",
+        ]
+    raise ValueError(f"unknown miscompilation pattern: {pattern!r}")
+
+
+def _build_llubi_bisect_script(args, pattern, llubi_args):
+    """Middle-end task: compare llubi(ref) with llubi(opt<args>(test.ll))."""
+    llubi = shlex.join(["./llubi-exec"] + shlex.split(llubi_args))
+    lines = [
+        f"timeout {_BISECT_CMD_TIMEOUT} {llubi} test.ll > _ref.txt 2> _ref_err.txt",
+        "if [ $? -ne 0 ]; then",
+        "    exit 125",
+        "fi",
+        f"timeout {_BISECT_CMD_TIMEOUT} ./opt-exec{_quoted_args(args)} test.ll -S > _opt.ll 2> _opt_err.txt",
+        "if [ $? -ne 0 ]; then",
+        "    exit 125",
+        "fi",
+        f"timeout {_BISECT_CMD_TIMEOUT} {llubi} _opt.ll > _out.txt 2> _err.txt",
+        "ret=$?",
+        # Tool limitations, not the bisected bug: llubi cannot interpret
+        # some instructions/intrinsics, and a max-steps abort is a hang.
+        "if grep -qF 'Unrecognized instruction' _err.txt; then",
+        "    exit 125",
+        "fi",
+        "if grep -qF 'Exceeded maximum number of execution steps.' _err.txt; then",
+        "    exit 125",
+        "fi",
+    ]
+    lines += _miscomp_pattern_check(pattern)
+    return "\n".join(lines)
+
+
+def _build_lli_bisect_script(args, pattern, llubi_args, lli_args):
+    """Backend task: compare llubi(ref) with lli of the (optionally
+    opt-transformed) IR. Mirrors verify_lli: args go to opt and lli_args
+    go to lli."""
+    llubi = shlex.join(["./llubi-exec"] + shlex.split(llubi_args))
+    lli = shlex.join(["./lli-exec"] + shlex.split(lli_args))
+    lines = [
+        f"timeout {_BISECT_CMD_TIMEOUT} {llubi} test.ll > _ref.txt 2> _ref_err.txt",
+        "if [ $? -ne 0 ]; then",
+        "    exit 125",
+        "fi",
+    ]
+    input_ll = "test.ll"
+    if args:
+        lines += [
+            f"timeout {_BISECT_CMD_TIMEOUT} ./opt-exec {shlex.join(shlex.split(args))} test.ll -S > _opt.ll 2> _opt_err.txt",
+            "if [ $? -ne 0 ]; then",
+            "    exit 125",
+            "fi",
+        ]
+        input_ll = "_opt.ll"
+    lines += [
+        f"timeout {_BISECT_CMD_TIMEOUT} {lli} {input_ll} > _out.txt 2> _err.txt",
+        "ret=$?",
+    ]
+    lines += _miscomp_pattern_check(pattern)
+    return "\n".join(lines)
+
+
+def _build_bisect_script(bug_type, oracle, args, pattern,
+                         llubi_args="--max-steps 1000000", lli_args=""):
+    """Build the shell script for a bisect task. Exposed for testing.
+
+    Crash tasks exit 1 when the crash pattern still appears. Miscompilation
+    tasks compare the llubi reference execution of test.ll against the
+    transformed execution (opt+llubi for middle-end, lli for backend) and
+    exit 1 only when the requested pattern reproduces. Scripts exit 125
+    (llvm-bisect-service SKIP) whenever a tool cannot evaluate a candidate
+    (e.g. an old commit lacks the pass, llubi cannot interpret the IR), so
+    such commits are skipped instead of being misclassified as bad.
+    """
+    if bug_type == "crash":
+        return _build_crash_bisect_script(oracle, args, pattern)
+    if bug_type != "miscompilation":
+        raise ValueError(f"unsupported bisect bug type: {bug_type!r}")
+    if oracle == "llubi":
+        return _build_llubi_bisect_script(args, pattern, llubi_args)
+    if oracle == "lli":
+        return _build_lli_bisect_script(args, pattern, llubi_args, lli_args)
+    raise ValueError(f"unsupported miscompilation bisect oracle: {oracle!r}")
 
 
 def add_issue_to_project(issue_number, project_number=30, org="llvm", repo="llvm-project"):
@@ -270,16 +402,22 @@ def add_issue_to_project(issue_number, project_number=30, org="llvm", repo="llvm
         log.exception("issue=%d add to project=%d failed", issue_number, project_number)
 
 
-def create_bisect_issue(issue_id, oracle, args, pattern, ir_content):
-    """Create a bisect task on dtcxzyw/llvm-bisect-service for crash bugs.
+def create_bisect_issue(issue_id, bug_type, oracle, args, pattern, ir_content,
+                        llubi_args="--max-steps 1000000", lli_args=""):
+    """Create a bisect task on dtcxzyw/llvm-bisect-service.
 
-    Uses LLVM_BISECT_TOKEN for authentication. Best-effort — failures are
-    logged but do not affect the main pipeline.
+    Crash tasks bisect on the crash pattern; miscompilation tasks bisect on
+    the llubi/lli output difference. Uses LLVM_BISECT_TOKEN for
+    authentication. Best-effort — failures are logged but do not affect the
+    main pipeline.
     """
     if not LLVM_BISECT_TOKEN:
         log.warning("bisect: LLVM_BISECT_TOKEN not set, cannot create bisect issue=%d", issue_id)
         return
-    script = _build_bisect_script(oracle, args, pattern)
+    script = _build_bisect_script(
+        bug_type, oracle, args, pattern,
+        llubi_args=llubi_args, lli_args=lli_args,
+    )
     body_parts = [
         f"```\n{script}\n```",
         f"```\n{ir_content}\n```",

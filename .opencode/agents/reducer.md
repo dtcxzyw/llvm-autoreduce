@@ -31,8 +31,10 @@ You are an LLVM bug reduction agent. Read `extract.json` to determine the bug ty
 |----------|----------------|
 | Mid-end crash | `tool=opt`, bisect with `opt-bisect-limit` to single pass, `llvm-reduce`, verify crash pattern with `opt <args> reduced.ll` |
 | Backend crash | `tool=llc`, `llvm-reduce` directly (no bisect), verify crash pattern with `llc <args> reduced.ll` |
-| Mid-end miscompilation | 1. `oracle=alive2` — preferred, requires function pass + no TBAA/unsupported metadata<br>2. `oracle=llubi` — fallback, bisect to single pass → llvm-reduce → verify reference rc=0, transformed diff or rc≠0/crash |
+| Mid-end miscompilation | `oracle=llubi` — bisect to single pass → llvm-reduce → verify reference rc=0, transformed diff or rc≠0/crash. `alive-tv` may be used to confirm the bug or locate the pass, but is NEVER the result oracle |
 | Backend miscompilation | `oracle=lli`, `llvm-reduce` directly (no bisect — the reproducer IR from clang is already optimized), verify reference rc=0, lli diff or rc≠0/crash |
+
+**CRITICAL — Never submit an alive2-based reproducer.** `alive-tv` stays available as a diagnostic tool (confirm a suspected miscompilation, identify the miscompiled function, read the counterexample), but `result.json` MUST use `oracle=llubi` (middle-end) or `oracle=lli` (backend); the daemon rejects `oracle=alive2`. An alive2-shaped repro (single function, no runnable `i32 @main(`) cannot be executed by llubi, verified by the daemon, or bisected by llvm-bisect-service. If alive2 reveals a mismatch, convert its `Example:` counterexample inputs into a runnable `i32 @main()` program with llubi-observable output, then continue with the llubi pipeline (see the extractor agent docs for the conversion example).
 
 **CRITICAL: After creating interestingness.sh, always run `chmod +x interestingness.sh`.** llvm-reduce --test= requires the script to be executable.
 

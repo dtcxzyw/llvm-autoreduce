@@ -1,6 +1,6 @@
 ---
 name: llvm-miscompile-reduce
-description: Reduce LLVM miscompilation reproducers — LLUBI/Alive2 oracle + opt-bisect-limit + llvm-reduce
+description: Reduce LLVM miscompilation reproducers — LLUBI/LLI oracle + opt-bisect-limit + llvm-reduce
 ---
 
 ## Tools
@@ -10,7 +10,7 @@ All LLVM tools are on PATH: `opt`, `llc`, `lli`, `llvm-reduce`, `clang`, `alive-
 
 ## Miscompilation Reduction Pipeline
 
-**CRITICAL: Reduction operates exclusively on LLVM IR. Never compile IR to native binaries for verification — use the oracle tools (llubi, alive-tv, lli) directly on IR.**
+**CRITICAL: Reduction operates exclusively on LLVM IR. Never compile IR to native binaries for verification — use the oracle tools (llubi, lli) directly on IR.** `alive-tv` may be used as a diagnostic (confirm the bug, locate the miscompiled function, read the counterexample), but it is never the submitted oracle: the reduced IR MUST stay executable by llubi (middle-end) or lli (backend).
 
 ### 0. Read metadata from extract.json
 Read `extract.json` and note:
@@ -29,6 +29,8 @@ ln -sf <reproducer_file> repro.ll
 Based on `extract.json` oracle:
 - `oracle=opt` (middle-end) → use **llubi** for bisect and reduce
 - `oracle=llc` (backend) → use **lli** for reduce (no bisect needed — the reproducer IR from clang is already fully optimized)
+
+**CRITICAL — the result oracle is always llubi or lli.** `alive-tv` may confirm a miscompilation and show a counterexample, but `result.json` MUST use `oracle=llubi` (middle-end) or `oracle=lli` (backend). The daemon rejects `oracle=alive2`, and an alive2-shaped single-function repro cannot be executed, verified, or bisected. If alive2 shows a mismatch, convert its `Example:` input values into a runnable `i32 @main()` program that prints the miscompiled result (keep `i32 @main(` and avoid `external global`), then reduce that program with the llubi oracle.
 
 **CRITICAL — lli preprocessing:** Before using the `lli` oracle, preprocess the IR to remove `main()` argument dependencies. If `main()` uses `argc`/`argv`, strip those references from the IR (e.g., replace `argc` with a constant). Without this, `llubi` and `lli` may produce different output even on a correct backend because llubi passes its own command-line arguments to `main()` (argv[0] = the input file name) and only fills unknown signatures with null values. Note: for a main() that does not match `int main(int, char**)`, llubi prints `warning: The signature of function 'main' does not match 'int main(int, char**)', passing null values for all arguments.` and CONTINUES with nulls — this warning is benign for the mid-end (llubi) oracle because both the reference and transformed runs see the same signature. If the program dereferences the null-filled arguments, the llubi reference run fails with `Immediate UB detected` — preprocess the IR first (strip main() parameters, replace uses with constants) exactly as for the lli path.
 
@@ -296,8 +298,7 @@ If llvm-reduce gets stuck on a specific delta pass (check its progress output fo
   "ir_file": "reduced.ll",
   "reference_file": "repro.ll",
   "oracle": "llubi",
-  "llubi_args": "--max-steps 1000000",
-  "alive2_args": ""
+  "llubi_args": "--max-steps 1000000"
 }
 ```
 
@@ -314,36 +315,14 @@ If llvm-reduce gets stuck on a specific delta pass (check its progress output fo
 }
 ```
 
-### 7. Try alive2 upgrade (middle-end only, optional)
+### 7. Alive2 is a diagnostic only (optional)
 
-For middle-end bugs with a function pass, try upgrading the oracle from llubi to alive2. This produces a stronger result.
+`alive-tv` can help confirm a middle-end miscompilation, locate the miscompiled function, and print a concrete counterexample. It is NOT a submittable oracle:
 
-**alive2 single-function requirement:** The IR submitted to alive2 MUST contain exactly 1 function definition (other `declare` declarations and global variables are allowed as needed). The verification step will reject IR with 0 or 2+ function definitions. Use `llvm-extract` to isolate a single function before running alive-tv.
-
-Determine if the buggy pass is a function pass. If YES, extract a single function:
-```
-llvm-extract -func=<function_name> before.ll -S -o single_func.ll
-```
-
-Verify the extracted file contains exactly 1 `define`:
-```
-grep -c '^define ' single_func.ll
-```
-Output must be `1`. If `llvm-extract` produces 0 or 2+ definitions (unusual), manually edit the IR to keep only the buggy function's definition (preserve any needed `declare` declarations and global variables).
-
-Test with alive-tv:
-```
-opt -passes='<pass_name>' single_func.ll -S > __opt.ll
-alive-tv --disable-undef-input --smt-to=10000 single_func.ll __opt.ll
-```
-
-Check the output:
-- "incorrect transformation" count > 0 or "ERROR: Value mismatch" → alive2 upgrade succeeded. **Before writing result.json, verify single_func.ll has exactly 1 function definition.** Then update result.json with `oracle: "alive2"`, `alive2_args: "--disable-undef-input --smt-to=10000"`, `llubi_args: ""`, and set `ir_file` to the single-function `.ll` file.
-- "0 incorrect transformations" + "Transformation seems to be correct!" → no bug visible to alive2, keep llubi.
-- "Alive2 approximated the semantics" → **NOT a valid upgrade**, keep llubi.
-- Unsupported intrinsic/metadata/function → **NOT a valid upgrade**, keep llubi.
-
-**Only attempt alive2 for function pass bugs.** For module pass bugs (e.g. inliner, IPSCCP, globalopt), skip this step.
+- Never set `oracle: "alive2"` in result.json — the daemon rejects it.
+- Never submit an alive2-shaped repro (single function, no `i32 @main(`) — it has nothing for llubi to execute, cannot be verified by the daemon, and cannot be bisected by llvm-bisect-service.
+- If alive2 reports `ERROR: Value mismatch` / `N incorrect transformations` with an `Example:` section, read the counterexample inputs and build an `i32 @main()` driver that calls the function with those inputs and prints the result. Reduce that runnable program with the llubi oracle (the extractor agent docs contain a complete conversion example).
+- If alive2 reports "Transformation seems to be correct", "Alive2 approximated the semantics", or unsupported intrinsic/metadata, just continue with llubi.
 
 ### 8. Additional manual reduction (optional — only if time permits)
 
@@ -355,36 +334,15 @@ After the checkpoint result.json, try these techniques to shrink `reduced.ll` fu
 
 **Reduce loop trip count:** If the IR has a loop with a fixed trip count (e.g. `br i1 %cmp, label %loop, label %exit` where %cmp compares induction variable against a constant like 128), reduce the constant (e.g. 128 → 4). This shrinks the loop body that needs to be preserved.
 
-**Loop transformations (alive2):** For bugs involving loop passes, use alive-tv's loop unrolling flags to help it reason about loops:
-```
-alive-tv --disable-undef-input --smt-to=10000 -src-unroll=4 -tgt-unroll=4 <src> <tgt>
-```
-This unrolls loops in both source and target up to N iterations.
-
-**NEVER use undef.** The reduced IR MUST NOT contain `undef` values — they cause non-deterministic behavior and can mask real miscompilations across all oracles (llubi, alive2, lli). If the original reproducer contains `undef`, replace it with `zeroinitializer` (for aggregates), `null` (for pointers), or explicit constant values (e.g. `i32 0`). The interestingness script and verification step will reject IR that still contains `undef`.
+**NEVER use undef.** The reduced IR MUST NOT contain `undef` values — they cause non-deterministic behavior and can mask real miscompilations across all oracles (llubi, lli). If the original reproducer contains `undef`, replace it with `zeroinitializer` (for aggregates), `null` (for pointers), or explicit constant values (e.g. `i32 0`). The interestingness script and verification step will reject IR that still contains `undef`.
 
 **Strip fast math flags.** If the IR contains `fast` or other fast-math flags on floating-point instructions, decompose `fast` into its constituent flags and keep only `nnan` and `ninf` — rewrite `fast` as `nnan ninf` explicitly. For any other fast-math flags (`nsz`, `arcp`, `contract`, `afn`, `reassoc`), remove them. If the miscompilation is specifically related to `nsz` (no-signed-zeros), prefer to drop `nsz` entirely rather than preserve it.
 
 ### 9. Verify final result
 
-Verify the reduced IR still reproduces the miscompilation with the single pass. Write the final `result.json` (update from checkpoint if alive2 upgrade or manual reduction succeeded).
+Verify the reduced IR still reproduces the miscompilation with the single pass. Write the final `result.json` (update from checkpoint if manual reduction succeeded).
 
 **args field requirements:** After bisect isolates the bug to a single pass (or a few specific passes), `args` MUST include that pass (e.g. `-passes=gvn`). Auxiliary flags that help reproduce the bug (e.g. `-slp-threshold=-99999`) may be included alongside the pass when relevant. **If the pass is instcombine, write it as `instcombine<no-verify-fixpoint>`** (e.g. `-passes=instcombine<no-verify-fixpoint>`) — the daemon rejects bare `instcombine`. The `args` field MUST NOT contain `-opt-bisect-limit` (bisect is a diagnostic step, NOT stored in result.json) and MUST NOT contain `default<` (the full O1/O2/O3 pipeline — bisect already narrowed it to the specific problematic pass). **Backend/codegen passes MUST use legacy PM:** when invoking backend passes like codegenprepare with `opt`, use `-codegenprepare` (legacy syntax), never `-passes=codegenprepare` (the new pass manager does not register codegen passes).
-
-**result.json (alive2):**
-```json
-{
-  "type": "miscompilation",
-  "args": "-passes=gvn",
-  "ir_file": "reduced.ll",
-  "reference_file": "repro.ll",
-  "oracle": "alive2",
-  "llubi_args": "",
-  "alive2_args": "--disable-undef-input --smt-to=10000"
-}
-```
-
-The `ir_file` for alive2 oracle MUST contain exactly 1 function definition. Function declarations (`declare`) and global variables are unrestricted. The verification step will reject IR with 0 or 2+ function definitions.
 
 **result.json (llubi):**
 ```json
@@ -394,8 +352,7 @@ The `ir_file` for alive2 oracle MUST contain exactly 1 function definition. Func
   "ir_file": "reduced.ll",
   "reference_file": "repro.ll",
   "oracle": "llubi",
-  "llubi_args": "--max-steps 1000000",
-  "alive2_args": ""
+  "llubi_args": "--max-steps 1000000"
 }
 ```
 
@@ -415,7 +372,6 @@ The `ir_file` for alive2 oracle MUST contain exactly 1 function definition. Func
 ## Error handling
 - Oracle crash on original IR: report in `error` field
 - If bisect cannot isolate a single pass: report the smallest pipeline possible in `args`
-- If alive2 reports approximation or unsupported intrinsics: keep llubi, do NOT upgrade
 - If all reduction attempts fail, write `result.json` with the FULL schema plus an `error` field describing the reason. The daemon requires all schema fields to be present — a bare `{"error": "..."}` will fail validation. Use:
 ```json
 {
@@ -425,7 +381,6 @@ The `ir_file` for alive2 oracle MUST contain exactly 1 function definition. Func
   "reference_file": "repro.ll",
   "oracle": "llubi",
   "llubi_args": "--max-steps 1000000",
-  "alive2_args": "",
   "error": "brief description of what failed"
 }
 ```

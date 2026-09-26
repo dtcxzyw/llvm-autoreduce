@@ -122,7 +122,7 @@ The daemon supports four bug categories across two stages (extract → reduce):
 |----------|--------------|-------------|
 | Mid-end crash | oracle=`opt`, trigger crash with `opt <args> reproducer.ll`, extract literal substring from stderr as `crash_pattern` | tool=`opt`, bisect + llvm-reduce, verify crash pattern reproduces with `opt <args> reduced.ll` |
 | Backend crash | oracle=`llc`, trigger crash with `llc <args> reproducer.ll`, extract literal substring from stderr as `crash_pattern` | tool=`llc`, llvm-reduce directly (no bisect), verify crash pattern reproduces with `llc <args> reduced.ll` |
-| Mid-end miscompilation | oracle=`opt`, `llubi reproducer.ll` as reference (must exit 0), `opt <args> reproducer.ll \| llubi` as transformed — stdout differs **or transformed rc≠0/crash** confirms | 1. `alive2` — preferred, requires function pass + no TBAA/unsupported metadata<br>2. `llubi` — fallback, bisect to single pass → llvm-reduce → verify reference rc=0, transformed diff or rc≠0/crash |
+| Mid-end miscompilation | oracle=`opt`, `llubi reproducer.ll` as reference (must exit 0), `opt <args> reproducer.ll \| llubi` as transformed — stdout differs **or transformed rc≠0/crash** confirms | oracle=`llubi`, bisect to single pass → llvm-reduce → verify reference rc=0, transformed diff or rc≠0/crash. `alive-tv` is a diagnostic only, never a submitted oracle |
 | Backend miscompilation | oracle=`llc`, `llubi reproducer.ll` as reference (must exit 0), `lli reproducer.ll` as JIT output — stdout differs **or lli rc≠0/crash** confirms | oracle=`lli`, bisect to single pass → llvm-reduce → verify reference rc=0, lli diff or rc≠0/crash |
 
 ### Interestingness Script Timeouts

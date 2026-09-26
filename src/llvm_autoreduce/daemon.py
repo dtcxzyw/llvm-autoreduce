@@ -481,8 +481,12 @@ def _validate_result(result):
         if oracle not in ("opt", "llc"):
             raise ValueError(f"result.json crash type with invalid oracle: {oracle!r}")
     elif result_type == "miscompilation":
+        # Only executable-output oracles are accepted: llubi (middle-end)
+        # and lli (backend). alive-tv remains available to agents as a
+        # diagnostic, but an alive2-shaped repro (single function, no
+        # runnable main) cannot be verified or bisected.
         oracle = result.get("oracle", "")
-        if oracle not in ("llubi", "alive2", "lli"):
+        if oracle not in ("llubi", "lli"):
             raise ValueError(f"result.json miscompilation type with unknown oracle: {oracle!r}")
         reference = result.get("reference_file", "")
         if reference and ("/" in reference or "\\" in reference):
@@ -619,7 +623,7 @@ def verify_llubi(result, workdir_path, pattern=""):
             return False
 
         # ACCEPTED RISK (R18): -S flag is placed after the input IR file
-        # for both verify_llubi and verify_alive2. LLVM's cl::opt parser
+        # for verify_llubi. LLVM's cl::opt parser
         # handles flags position-independently, but this ordering is
         # non-idiomatic. If a future LLVM version changes to require options
         # before positional args, the flag would need to be moved.
@@ -694,109 +698,12 @@ def verify_llubi(result, workdir_path, pattern=""):
         return False
 
 
-# ACCEPTED RISK (R8): verify_alive2 relies on Alive2's stable output
-# format to detect miscompilation. If upstream Alive2 changes the phrasing
-# of "0 incorrect transformations", "Transformation seems to be correct",
-# or the error patterns, the logic below must be updated. These strings
-# have been stable across multiple Alive2 releases and the coupling is
-# limited to this single function.
-_ALIVE2_INCORRECT_RE = re.compile(
-    r"[1-9]\d* incorrect transformation|ERROR: Value mismatch"
-)
-
-_ALIVE2_APPROXIMATION_MARKER = "Alive2 approximated the semantics of the programs"
-
-
-_DEFINE_RE = re.compile(r"^\s*define\s", re.MULTILINE)
-
-
-def _check_single_function(ir_file, workdir_path):
-    safe_ir = _safe_relative(workdir_path, ir_file)
-    try:
-        content = workdir.read(safe_ir)
-    except (ValueError, OSError):
-        return False
-    count = len(_DEFINE_RE.findall(content))
-    if count != 1:
-        log.error("alive2 verify: IR has %d function definitions, need exactly 1", count)
-        return False
-    return True
-
-
-def verify_alive2(result, workdir_path):
-    safe_ir = _safe_relative(workdir_path, result["ir_file"])
-    if not _verify_ir_valid(result["ir_file"], workdir_path):
-        return False
-    if not _check_no_undef(result["ir_file"], workdir_path):
-        log.error("alive2 verify: IR contains undef")
-        return False
-    if not _check_single_function(result["ir_file"], workdir_path):
-        return False
-    args = result.get("args", "")
-    # alive2_args is produced by the reducer agent (trusted oracle).
-    alive2_args = result.get("alive2_args", "--smt-to=10000")
-    # Use the built LLVM toolchain opt binary, never PATH.
-    opt_path = str(config.LLVM_BIN / "opt")
-    try:
-        opt_out = _run_process(
-            [opt_path] + shlex.split(args) + [safe_ir, "-S"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-            cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
-        )
-        if opt_out.returncode != 0:
-            log.error("alive2 opt failed: %s", opt_out.stderr[:200])
-            return False
-        transformed = workdir_path / "__transformed.ll"
-        # ACCEPTED RISK (F58): opt_out.stdout is not checked for emptiness —
-        # same rationale as verify_llubi above.
-        transformed.write_text(opt_out.stdout)
-
-        # ACCEPTED RISK: "__transformed.ll" is passed as a relative
-        # path string (not via _safe_relative). The cwd is set to
-        # workdir_path so relative resolution is correct. The filename
-        # is hardcoded and matches the write path above, so path
-        # traversal cannot occur.
-        p = _run_process(
-            [str(config.ALIVE2_BIN), "--disable-undef-input"]
-            + shlex.split(alive2_args) + [safe_ir, "__transformed.ll"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-            cwd=str(workdir_path), timeout=config.VERIFY_TIMEOUT,
-        )
-        # If alive-tv crashes (negative returncode), treat as inconclusive
-        # — not a confirmed miscompilation.
-        if p.returncode < 0:
-            log.error("alive2 crashed: signal=%d stderr=%s", -p.returncode, p.stderr[:200])
-            return False
-        output = p.stderr + p.stdout
-        # Check for disk-full before pattern matching — disk exhaustion
-        # may produce truncated output that looks like a miscompilation.
-        if "No space left on device" in output or "Disk quota exceeded" in output:
-            return False
-        # Both phrases must be present for Alive2 to declare correctness.
-        correct = (
-            "0 incorrect transformations" in output
-            and "Transformation seems to be correct" in output
-        )
-        if correct:
-            return False
-        # Must match a specific incorrect-transformation or value-mismatch
-        # pattern to be a confirmed miscompilation.
-        if _ALIVE2_INCORRECT_RE.search(output):
-            # Reject Alive2 approximations — they are not confirmed bugs.
-            if _ALIVE2_APPROXIMATION_MARKER in output:
-                log.info("alive2 approximation detected, not a confirmed miscompilation")
-                return False
-            return True
-        # Inconclusive — Alive2 may have been killed by resource limits
-        # or produced unexpected output. Treat as not confirmed.
-        log.warning("alive2 inconclusive: no correctness message and no error pattern")
-        return False
-    except subprocess.TimeoutExpired:
-        log.error("verify alive2 timeout")
-        return False
-    except OSError:
-        log.exception("verify alive2 os error")
-        return False
+# alive-tv remains available to the extractor/reducer agents as a
+# diagnostic (confirm a suspected miscompilation, locate the miscompiled
+# function), but it is never a submitted oracle. The daemon only verifies
+# executable-output oracles (llubi, lli) because an alive2-shaped
+# reproducer has no runnable entry point and cannot be bisected by
+# llvm-bisect-service.
 
 
 # verify_lli compares stdout from llubi (reference interpreter)
@@ -881,8 +788,8 @@ def verify_lli(result, workdir_path, pattern=""):
 
 # The daemon trusts the oracle choice made by the reducer agent inside
 # result.json. It does not independently select or fallback between
-# llubi and alive-tv — the reducer agent has full context about
-# which oracle succeeded during its opt-bisect-limit binary search.
+# llubi and lli — the reducer agent has full context about
+# which oracle reproduced the miscompilation.
 # ACCEPTED RISK (F57): verify() and _validate_result() use separate
 # if-else chains for oracle dispatch. If a new oracle is added to
 # _validate_result() without a corresponding branch in verify(), the
@@ -900,8 +807,6 @@ def verify(result, workdir_path, meta):
         return verify_crash(result, workdir_path, pattern)
     if result.get("oracle") == "llubi":
         return verify_llubi(result, workdir_path, pattern)
-    if result.get("oracle") == "alive2":
-        return verify_alive2(result, workdir_path)
     if result.get("oracle") == "lli":
         if not _check_main_no_params(result["ir_file"], workdir_path):
             log.warning("verify: lli reduced IR main() has params")
@@ -1036,10 +941,9 @@ def _check_target_triple_x86(reproducer_file, workdir_path):
 def _check_no_undef(ir_file, workdir_path):
     """Verify the IR file does not contain undef values.
 
-    undef can non-deterministically mask miscompilations — alive2
-    handles it differently, and llubi/lli may produce inconsistent
-    results. The reducer agent is instructed to replace undef with
-    zero/null/poison.
+    undef can non-deterministically mask miscompilations — llubi/lli
+    may produce inconsistent results. The reducer agent is instructed
+    to replace undef with zero/null/poison.
     """
     safe_ir = _safe_relative(workdir_path, ir_file)
     try:
@@ -1275,7 +1179,7 @@ def _generate_report(meta, result, workdir_path, issue_id, timing=None):
     oracle = result.get("oracle", "")
     if oracle:
         lines.append(f"**Oracle:** {oracle}")
-        if oracle in ("llubi", "alive2"):
+        if oracle == "llubi":
             lines.append("**Scope:** middle-end")
         elif oracle == "lli":
             lines.append("**Scope:** backend")
@@ -1287,7 +1191,7 @@ def _generate_report(meta, result, workdir_path, issue_id, timing=None):
     lines.append("")
     lines.append("## Toolchain")
     lines.append("")
-    for name, repo in (("llvm", config.LLVM_TRUNK), ("alive2", config.ALIVE2_TRUNK)):
+    for name, repo in (("llvm", config.LLVM_TRUNK),):
         sha = subprocess.run(
             ["git", "-C", str(repo), "rev-parse", "HEAD"],
             capture_output=True, text=True, timeout=10,
@@ -1318,7 +1222,7 @@ def _generate_report(meta, result, workdir_path, issue_id, timing=None):
     invocation = None
     if bug_type == "crash":
         invocation = f"; {oracle} {args} {ir_file}".rstrip()
-    elif oracle in ("llubi", "alive2"):
+    elif oracle == "llubi":
         invocation = f"; opt {args} {ir_file}".rstrip()
     elif oracle == "lli":
         invocation = f"; lli {args} {ir_file}".rstrip()
@@ -1358,12 +1262,7 @@ def _generate_report(meta, result, workdir_path, issue_id, timing=None):
         lines.append(cmd)
         lines.append("```")
     elif bug_type == "miscompilation":
-        if oracle == "alive2":
-            alive2_args = result.get("alive2_args", "--smt-to=10000")
-            lines.append("```bash")
-            lines.append(f"opt {args} {ir_file} -S > __reduced_opt.ll && alive-tv --disable-undef-input {alive2_args} {ir_file} __reduced_opt.ll")
-            lines.append("```")
-        elif oracle == "llubi":
+        if oracle == "llubi":
             llubi_args = result.get("llubi_args", "--max-steps 1000000")
             lines.append("```bash")
             lines.append("# Reference:")
@@ -1801,17 +1700,23 @@ def reprocess_issue(issue):
         mark_dropped(issue_id, "submission_failed")
         mark_processed(issue_id)
         return
-    if meta["type"] == "crash":
+    # Crash and miscompilation reproducers are both bisectable: crash
+    # tasks bisect on the crash pattern, miscompilation tasks on the
+    # reference-vs-transformed output difference (llubi/lli).
+    if meta["type"] in ("crash", "miscompilation"):
         try:
             ir_file = result["ir_file"]
             ir_path = _safe_relative(wd, ir_file)
             ir_content = workdir.read(ir_path)
             bisect_num = github.create_bisect_issue(
                 issue_id,
+                meta["type"],
                 result.get("oracle", "opt"),
                 result.get("args", ""),
                 meta.get("pattern", ""),
                 ir_content,
+                llubi_args=result.get("llubi_args", "--max-steps 1000000"),
+                lli_args=result.get("lli_args", ""),
             )
             if bisect_num is not None:
                 _bisect_tracker[issue_id] = {
@@ -1949,16 +1854,16 @@ def main():
             missing.append(binary)
         else:
             log.warning("%s at %s: %s on --version", binary, config.LLVM_BIN / binary, detail)
-    for oracle_name, oracle_path in (
-        ("alive-tv", config.ALIVE2_BIN),
-        ("llubi", config.LLUBI_BIN),
+    for oracle_name, oracle_path, role in (
+        ("alive-tv", config.ALIVE2_BIN, "agent-side diagnosis"),
+        ("llubi", config.LLUBI_BIN, "miscompilation verification"),
     ):
         ok, detail = _check_binary(oracle_path, oracle_name)
         if ok:
             log.info("found %s at %s", oracle_name, oracle_path)
         else:
-            log.warning("%s at %s: %s — miscompilation verification will be unavailable",
-                        oracle_name, oracle_path, detail)
+            log.warning("%s at %s: %s — %s will be unavailable",
+                        oracle_name, oracle_path, detail, role)
     if missing:
         log.critical("required binaries not found: %s", ", ".join(missing))
         sys.exit(1)

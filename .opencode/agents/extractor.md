@@ -84,6 +84,42 @@ Your job:
     - **CRITICAL — llubi main() signature handling:** For a main() that does not match `int main(int, char**)` (e.g. `main(ptr)`, `main(i32, i64)`), llubi does NOT reject the IR — it prints a warning on stderr (`The signature of function 'main' does not match 'int main(int, char**)', passing null values for all arguments.`) and runs with null argument values. This warning alone is NOT an error and does NOT make the run fail. However, if the program dereferences those null arguments, llubi exits non-zero with `Immediate UB detected: Invalid memory access via a pointer with nullary provenance.` — the reference run MUST exit 0, so if the reference fails this way, preprocess the IR by stripping main() parameters and replacing their uses (first try `0`/`null`, then a loaded global as in the backend path below), then retry. If the bug cannot be reproduced after preprocessing, classify as `unrelated`.
     - **CRITICAL — llubi unsupported instructions are NOT miscompilations:** llubi exits non-zero with `Unrecognized instruction` on stderr for any instruction or intrinsic it does not implement (e.g. target-specific intrinsics like `@llvm.x86.*`). If a llubi run fails with that stderr marker, llubi simply cannot interpret this IR — do NOT classify as a miscompilation. For the transformed run, first check stderr: if it contains `Unrecognized instruction`, try preprocessing the IR to remove the unsupported construct (e.g. strip target-specific intrinsics); if the bug cannot be reproduced without them, classify as `unrelated`.
     - **CRITICAL — mid-end llubi reproducer shape:** The reproducer MUST keep an `i32 @main(` definition (parameters are allowed — the reference and transformed runs see the same signature) and MUST NOT contain `external global` — the daemon's llubi verification enforces both statically on the extract-stage reproducer (mirroring the reduce-stage interestingness guards). If the IR lacks `i32 @main(` (e.g. no main, `void @main()`) or references external globals, preprocess it before verification: add an `i32 @main()` harness or fix the return type, and replace each external global with an in-module definition (e.g. `@x = internal global <ty> zeroinitializer`) whose uses behave the same. If the bug cannot be reproduced after preprocessing, classify as `unrelated`.
+    - **Alive2-only reproducers (mid-end):** If the issue only provides an `alive-tv` run (e.g. `ERROR: Value mismatch`, `N incorrect transformations`, or a single-function IR with no `main()`), you may rerun `alive-tv` to confirm the miscompilation and read the counterexample, but extract.json MUST point to an `i32 @main(` program that llubi can execute — a single-function alive2-shaped repro is NOT acceptable. Build the program from the counterexample's `Example:` input values: add an `i32 @main()` that calls the function with those exact inputs and prints the result, keeping the function and its globals self-contained (no `external global`). Then verify the reference and transformed outputs differ as usual. If no runnable program can observe the counterexample (e.g. the mismatch is UB-only and produces no output difference), classify as `unrelated`.
+
+      Example — issue contains this alive-tv output:
+      ```
+      Transformation doesn't verify!
+      ERROR: Value mismatch for i8 %add
+      Example:
+      %x = #x02 (2)
+      Source: #x04 (4)
+      Target: #x08 (8)
+      ```
+      with this function:
+      ```llvm
+      define i8 @f(i8 %x) {
+        %add = add i8 %x, %x
+        ret i8 %add
+      }
+      ```
+      Construct `reproducer.ll` from the counterexample's `%x = 2`:
+      ```llvm
+      declare i32 @printf(ptr, ...)
+      @fmt = private constant [4 x i8] c"%d\0A\00"
+
+      define i8 @f(i8 %x) {
+        %add = add i8 %x, %x
+        ret i8 %add
+      }
+
+      define i32 @main() {
+        %r = call i8 @f(i8 2)
+        %r32 = zext i8 %r to i32
+        call i32 (ptr, ...) @printf(ptr @fmt, i32 %r32)
+        ret i32 0
+      }
+      ```
+      Here `llubi reproducer.ll` prints `4` while `opt -passes='<pass>' reproducer.ll -S | llubi` prints `8`, so extract.json is `pattern: "wrong_output"`, `oracle: "opt"`, `args: "-passes='<pass>'"`.
     - If `ref_out` = `opt_out` → the mid-end is correct. Generate fully-optimized IR: `clang -O2 -S -emit-llvm source.c -o full_opt.ll` (without `-disable-llvm-passes`, so the IR is already optimized). **Check full_opt.ll: main() MUST have no parameters — the daemon requires `i32 @main()` for the lli oracle.** If main() declares parameters (e.g. `i32 @main(i32 %argc, ptr %argv)`), preprocess the IR by changing the function signature to `i32 @main()`. Then resolve the now-dangling parameter uses: first try replacing `%argc` with `0` and `%argv` with `null`. If that approach fails to reproduce the bug (constant propagation may over-reduce and eliminate the miscompilation), instead add a new global and load from it — e.g. `@argc_fake = global i32 0`, then `%argc_val = load i32, ptr @argc_fake` and replace all uses of `%argc` with `%argc_val`. This preserves the IR structure without enabling constant-propagating passes to fold the argument away. **The reproducer MUST have `target triple = "x86_64...`**. Even if the original issue was reported on a different architecture (e.g. AArch64, RISC-V, ARM), adapt the reproducer to reproduce on the local x86_64 host — change the target triple to `"x86_64-unknown-linux-gnu"` and adjust any target-specific attributes or intrinsics. lli only supports the host architecture, and the host is x86_64. Then `lli full_opt.ll` — if output differs from reference, or lli crashes/exits nonzero → **backend miscompilation**. oracle=`llc`, args=`""`, reproducer_file=`full_opt.ll` (the already-optimized IR — no opt pipeline needed).
     - If **neither** oracle can reproduce (both produce identical output and exit 0), classify as `type: "unrelated"`.
      - **CRITICAL — lli crash handling:** If the crash output originates from lli/JIT, first try `llc` on the same IR. If `llc` also crashes → classify as `crash` (llc). If `llc` does NOT crash → classify as `miscompilation`, because the JIT crash indicates a backend codegen bug, not a crash in the compiler itself. The reducer never sees lli crash.

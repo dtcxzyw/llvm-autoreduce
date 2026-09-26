@@ -156,8 +156,9 @@ class TestValidateResult:
     def test_miscompilation_llubi_ok(self):
         _validate_result({"ir_file": "repro.ll", "type": "miscompilation", "oracle": "llubi"})
 
-    def test_miscompilation_alive2_ok(self):
-        _validate_result({"ir_file": "repro.ll", "type": "miscompilation", "oracle": "alive2"})
+    def test_miscompilation_alive2_rejected(self):
+        with pytest.raises(ValueError, match="unknown oracle"):
+            _validate_result({"ir_file": "repro.ll", "type": "miscompilation", "oracle": "alive2"})
 
     def test_miscompilation_lli_ok(self):
         _validate_result({"ir_file": "repro.ll", "type": "miscompilation", "oracle": "lli"})
@@ -183,7 +184,7 @@ class TestValidateResult:
         _validate_result({
             "ir_file": "repro.ll",
             "type": "miscompilation",
-            "oracle": "alive2",
+            "oracle": "llubi",
             "reference_file": "repro.ll",
         })
 
@@ -283,7 +284,7 @@ class TestVerifyExtractConsistency:
 
     def test_reference_file_not_specified_ok(self, tmp_path):
         meta = {"type": "miscompilation"}
-        result = {"type": "miscompilation", "oracle": "alive2"}
+        result = {"type": "miscompilation", "oracle": "llubi"}
         assert verify_extract_consistency(meta, result, tmp_path) is True
 
 
