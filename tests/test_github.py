@@ -118,21 +118,26 @@ class TestBuildMiscompilationBisectScript:
         assert "./llubi-exec --max-steps 1000000 _opt.ll > _out.txt" in script
         assert "diff -q _ref.txt _out.txt" in script
         assert "Unrecognized instruction" in script
-        assert "Exceeded maximum number of execution steps." in script
         assert script.rstrip().endswith("exit 1")
 
     def test_llubi_nonzero_exit(self):
         script = _build_bisect_script("miscompilation", "llubi", "-passes=gvn", "nonzero_exit")
-        assert "if [ $ret -eq 124 ]" in script
         assert "if [ $ret -eq 0 ]" in script
         assert script.rstrip().endswith("exit 1")
 
     def test_llubi_infinite_loop(self):
         script = _build_bisect_script("miscompilation", "llubi", "-passes=gvn", "infinite_loop")
-        assert "if [ $ret -eq 124 ]" in script
+        # llubi is step-bounded: an exceeded budget is the hang signal.
+        assert "Exceeded maximum number of execution steps." in script
         # A normal exit is a good commit, not a skip.
         assert "if [ $ret -eq 0 ]" in script
         assert script.rstrip().endswith("exit 125")
+
+    def test_llubi_scripts_have_no_timeout(self):
+        # --max-steps bounds llubi execution, so no wall-clock timeout.
+        for pattern in ("wrong_output", "nonzero_exit", "infinite_loop"):
+            script = _build_bisect_script("miscompilation", "llubi", "-passes=gvn", pattern)
+            assert "timeout" not in script
 
     def test_llubi_custom_args_quoted(self):
         script = _build_bisect_script(
@@ -148,9 +153,17 @@ class TestBuildMiscompilationBisectScript:
             llubi_args="--max-steps 1000", lli_args="-O0",
         )
         assert "./llubi-exec --max-steps 1000 test.ll" in script
-        assert "./lli-exec -O0 test.ll > _out.txt" in script
+        assert "timeout 30 ./lli-exec -O0 test.ll > _out.txt" in script
         assert "diff -q _ref.txt _out.txt" in script
         assert "Unrecognized instruction" not in script
+
+    def test_lli_only_transformed_run_is_timeout_bounded(self):
+        script = _build_bisect_script(
+            "miscompilation", "lli", "-passes=gvn", "nonzero_exit", lli_args="-O2",
+        )
+        assert "timeout 30 ./lli-exec -O2 _opt.ll > _out.txt" in script
+        assert "timeout ./llubi-exec" not in script
+        assert "timeout ./opt-exec" not in script
 
     def test_lli_opt_args_mirror_verify(self):
         script = _build_bisect_script("miscompilation", "lli", "-passes=gvn", "nonzero_exit")
@@ -159,7 +172,7 @@ class TestBuildMiscompilationBisectScript:
 
     def test_lli_infinite_loop(self):
         script = _build_bisect_script("miscompilation", "lli", "", "infinite_loop")
-        assert "./lli-exec test.ll" in script
+        assert "timeout 30 ./lli-exec test.ll" in script
         assert "if [ $ret -eq 124 ]" in script
         assert "if [ $ret -eq 0 ]" in script
 

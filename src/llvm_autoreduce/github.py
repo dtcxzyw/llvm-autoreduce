@@ -222,10 +222,10 @@ def set_issue_type(issue_number, issue_type):
         log.exception("issue=%d set type failed: %s", issue_number, issue_type)
 
 
-# Per-command timeout for miscompilation bisect scripts. llvm-bisect-service
-# probes candidate good commits with a 60-second timeout, so every command in
-# the script must finish well within one minute.
-_BISECT_CMD_TIMEOUT = 30
+# Wall-clock bound for lli runs in miscompilation bisect scripts. lli
+# executes native code and can hang, while llubi is step-bounded by
+# --max-steps and opt runs on tiny reduced IR — neither needs a timeout.
+_LLI_BISECT_TIMEOUT = 30
 
 
 def _build_crash_bisect_script(oracle, args, pattern):
@@ -255,15 +255,21 @@ def _quoted_args(args):
     return f" {shlex.join(shlex.split(args))}" if args else ""
 
 
-def _miscomp_pattern_check(pattern):
+def _miscomp_pattern_check(pattern, step_bounded=False):
     """Pattern-specific BAD/GOOD decision shared by both miscompilation
-    bisect scripts. Expects the transformed run's status in $ret and its
-    stdout in _out.txt. Exit 0 = good commit, 1 = bad commit, 125 = skip.
+    bisect scripts. Expects the transformed run's status in $ret, its
+    stdout in _out.txt and stderr in _err.txt.
+
+    Exit 0 = good commit, 1 = bad commit, 125 = skip. ``step_bounded``
+    marks the llubi oracle: --max-steps bounds execution, so an exceeded
+    step budget is the non-termination signal for infinite_loop and a
+    failure for nonzero_exit (mirroring verify_llubi, which accepts any
+    non-zero exit except `Unrecognized instruction`).
     """
     if pattern == "wrong_output":
         return [
-            # A transformed-run failure is not wrong_output — the pattern
-            # changed, so this commit cannot be evaluated.
+            # A transformed-run failure (crash, step-budget abort) is not
+            # wrong_output — the pattern changed, so skip this commit.
             "if [ $ret -ne 0 ]; then",
             "    exit 125",
             "fi",
@@ -273,22 +279,34 @@ def _miscomp_pattern_check(pattern):
             "exit 1",
         ]
     if pattern == "nonzero_exit":
-        return [
-            # Timeout (124) means the program hangs — a different pattern.
-            "if [ $ret -eq 124 ]; then",
-            "    exit 125",
-            "fi",
+        prefix = []
+        if not step_bounded:
+            prefix = [
+                # A hang is a different pattern.
+                "if [ $ret -eq 124 ]; then",
+                "    exit 125",
+                "fi",
+            ]
+        return prefix + [
             "if [ $ret -eq 0 ]; then",
             "    exit 0",
             "fi",
             "exit 1",
         ]
     if pattern == "infinite_loop":
-        return [
-            # Timeout (124) is the bug; a normal exit means this commit is good.
-            "if [ $ret -eq 124 ]; then",
-            "    exit 1",
-            "fi",
+        if step_bounded:
+            hang = [
+                "if grep -qF 'Exceeded maximum number of execution steps.' _err.txt; then",
+                "    exit 1",
+                "fi",
+            ]
+        else:
+            hang = [
+                "if [ $ret -eq 124 ]; then",
+                "    exit 1",
+                "fi",
+            ]
+        return hang + [
             "if [ $ret -eq 0 ]; then",
             "    exit 0",
             "fi",
@@ -298,40 +316,42 @@ def _miscomp_pattern_check(pattern):
 
 
 def _build_llubi_bisect_script(args, pattern, llubi_args):
-    """Middle-end task: compare llubi(ref) with llubi(opt<args>(test.ll))."""
+    """Middle-end task: compare llubi(ref) with llubi(opt<args>(test.ll)).
+
+    No timeout is needed: llubi is step-bounded by --max-steps (an
+    exceeded budget is the non-termination signal) and opt runs on tiny
+    reduced IR.
+    """
     llubi = shlex.join(["./llubi-exec"] + shlex.split(llubi_args))
     lines = [
-        f"timeout {_BISECT_CMD_TIMEOUT} {llubi} test.ll > _ref.txt 2> _ref_err.txt",
+        f"{llubi} test.ll > _ref.txt 2> _ref_err.txt",
         "if [ $? -ne 0 ]; then",
         "    exit 125",
         "fi",
-        f"timeout {_BISECT_CMD_TIMEOUT} ./opt-exec{_quoted_args(args)} test.ll -S > _opt.ll 2> _opt_err.txt",
+        f"./opt-exec{_quoted_args(args)} test.ll -S > _opt.ll 2> _opt_err.txt",
         "if [ $? -ne 0 ]; then",
         "    exit 125",
         "fi",
-        f"timeout {_BISECT_CMD_TIMEOUT} {llubi} _opt.ll > _out.txt 2> _err.txt",
+        f"{llubi} _opt.ll > _out.txt 2> _err.txt",
         "ret=$?",
-        # Tool limitations, not the bisected bug: llubi cannot interpret
-        # some instructions/intrinsics, and a max-steps abort is a hang.
+        # A tool limitation, not the bisected bug.
         "if grep -qF 'Unrecognized instruction' _err.txt; then",
         "    exit 125",
         "fi",
-        "if grep -qF 'Exceeded maximum number of execution steps.' _err.txt; then",
-        "    exit 125",
-        "fi",
     ]
-    lines += _miscomp_pattern_check(pattern)
+    lines += _miscomp_pattern_check(pattern, step_bounded=True)
     return "\n".join(lines)
 
 
 def _build_lli_bisect_script(args, pattern, llubi_args, lli_args):
     """Backend task: compare llubi(ref) with lli of the (optionally
     opt-transformed) IR. Mirrors verify_lli: args go to opt and lli_args
-    go to lli."""
+    go to lli. Only the lli run is timeout-bounded — it executes native
+    code and can hang."""
     llubi = shlex.join(["./llubi-exec"] + shlex.split(llubi_args))
     lli = shlex.join(["./lli-exec"] + shlex.split(lli_args))
     lines = [
-        f"timeout {_BISECT_CMD_TIMEOUT} {llubi} test.ll > _ref.txt 2> _ref_err.txt",
+        f"{llubi} test.ll > _ref.txt 2> _ref_err.txt",
         "if [ $? -ne 0 ]; then",
         "    exit 125",
         "fi",
@@ -339,14 +359,14 @@ def _build_lli_bisect_script(args, pattern, llubi_args, lli_args):
     input_ll = "test.ll"
     if args:
         lines += [
-            f"timeout {_BISECT_CMD_TIMEOUT} ./opt-exec {shlex.join(shlex.split(args))} test.ll -S > _opt.ll 2> _opt_err.txt",
+            f"./opt-exec {shlex.join(shlex.split(args))} test.ll -S > _opt.ll 2> _opt_err.txt",
             "if [ $? -ne 0 ]; then",
             "    exit 125",
             "fi",
         ]
         input_ll = "_opt.ll"
     lines += [
-        f"timeout {_BISECT_CMD_TIMEOUT} {lli} {input_ll} > _out.txt 2> _err.txt",
+        f"timeout {_LLI_BISECT_TIMEOUT} {lli} {input_ll} > _out.txt 2> _err.txt",
         "ret=$?",
     ]
     lines += _miscomp_pattern_check(pattern)
