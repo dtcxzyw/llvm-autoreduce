@@ -288,7 +288,7 @@ If llvm-reduce gets stuck on a specific delta pass (check its progress output fo
 
 ### 6. Write checkpoint result (REQUIRED)
 
-**CRITICAL: After llvm-reduce produces a working reduced.ll, write result.json IMMEDIATELY.** This saves a valid result before attempting optional oracle upgrades and manual reduction. The daemon accepts this as a completed reduction even if manual steps run out of time.
+**CRITICAL: After llvm-reduce produces a working reduced.ll, write result.json IMMEDIATELY.** This saves a valid result before attempting optional manual reduction. The daemon accepts this as a completed reduction even if manual steps run out of time.
 
 **Middle-end (llubi):**
 ```json
