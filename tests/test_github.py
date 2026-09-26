@@ -139,7 +139,7 @@ class TestBuildMiscompilationBisectScript:
             script = _build_bisect_script("miscompilation", "llubi", "-passes=gvn", pattern)
             assert "timeout" not in script
 
-    def test_llubi_args_quoted(self):
+    def test_opt_args_quoted(self):
         script = _build_bisect_script(
             "miscompilation", "llubi", "-passes=licm;rm -rf /", "wrong_output",
         )
